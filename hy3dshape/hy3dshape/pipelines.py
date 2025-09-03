@@ -32,43 +32,94 @@ from .models.autoencoders import SurfaceExtractors
 from .utils import logger, synchronize_timer, smart_load_model
 
 from safetensors.torch import load_file as _safetensors_load
+import safetensors
+import logging
+import checkpoint_pickle
 
 
-def load_torch_file(path, map_location="cpu", safe_load=True):
-    """
-    Compatibility loader for torch/safetensors checkpoints.
+# def load_torch_file(path, map_location="cpu", safe_load=True):
+#     """
+#     Compatibility loader for torch/safetensors checkpoints.
 
-    Supports: .safetensors (via safetensors), .pt/.pth/.ckpt (via torch.load).
-    If the loaded object is a dict and contains common wrapper keys like
-    'state_dict', 'model' or 'sd', the inner dict is returned. If keys are
-    prefixed with 'module.' they will be stripped.
-    """
-    ext = os.path.splitext(path)[1].lower()
-    if ext == ".safetensors":
-        return _safetensors_load(path, device=map_location)
+#     Supports: .safetensors (via safetensors), .pt/.pth/.ckpt (via torch.load).
+#     If the loaded object is a dict and contains common wrapper keys like
+#     'state_dict', 'model' or 'sd', the inner dict is returned. If keys are
+#     prefixed with 'module.' they will be stripped.
+#     """
+#     ext = os.path.splitext(path)[1].lower()
+#     if ext == ".safetensors":
+#         return _safetensors_load(path, device=map_location)
 
-    # Fallback to torch.load for other checkpoint types
-    data = torch.load(path, map_location=map_location)
+#     # Fallback to torch.load for other checkpoint types
+#     data = torch.load(path, map_location=map_location, weights_only=False)
 
-    # Unwrap common containers
-    if isinstance(data, dict):
-        for key in ("state_dict", "model", "sd"):
-            if key in data and isinstance(data[key], dict):
-                data = data[key]
-                break
+#     # Unwrap common containers
+#     if isinstance(data, dict):
+#         for key in ("state_dict", "model", "sd"):
+#             if key in data and isinstance(data[key], dict):
+#                 data = data[key]
+#                 break
 
-        # Strip DataParallel 'module.' prefixes
-        if isinstance(data, dict):
-            if any(
-                isinstance(k, str) and k.startswith("module.")
-                for k in list(data.keys())
-            ):
-                data = {
-                    (k.replace("module.", "") if isinstance(k, str) else k): v
-                    for k, v in data.items()
-                }
+#         # Strip DataParallel 'module.' prefixes
+#         if isinstance(data, dict):
+#             if any(
+#                 isinstance(k, str) and k.startswith("module.")
+#                 for k in list(data.keys())
+#             ):
+#                 data = {
+#                     (k.replace("module.", "") if isinstance(k, str) else k): v
+#                     for k, v in data.items()
+#                 }
 
-    return data
+#     return data
+
+def load_torch_file(ckpt, safe_load=False, device=None, return_metadata=False):
+    MMAP_TORCH_FILES = False
+    DISABLE_MMAP = False
+    ALWAYS_SAFE_LOAD = False
+    if device is None:
+        device = torch.device("cpu")
+    metadata = None
+    if ckpt.lower().endswith(".safetensors") or ckpt.lower().endswith(".sft"):
+        try:
+            with safetensors.safe_open(ckpt, framework="pt", device=device.type) as f:
+                sd = {}
+                for k in f.keys():
+                    tensor = f.get_tensor(k)
+                    if DISABLE_MMAP:  # TODO: Not sure if this is the best way to bypass the mmap issues
+                        tensor = tensor.to(device=device, copy=True)
+                    sd[k] = tensor
+                if return_metadata:
+                    metadata = f.metadata()
+        except Exception as e:
+            if len(e.args) > 0:
+                message = e.args[0]
+                if "HeaderTooLarge" in message:
+                    raise ValueError("{}\n\nFile path: {}\n\nThe safetensors file is corrupt or invalid. Make sure this is actually a safetensors file and not a ckpt or pt or other filetype.".format(message, ckpt)) from e
+                if "MetadataIncompleteBuffer" in message:
+                    raise ValueError("{}\n\nFile path: {}\n\nThe safetensors file is corrupt/incomplete. Check the file size and make sure you have copied/downloaded it correctly.".format(message, ckpt)) from e
+            raise e
+    else:
+        torch_args = {}
+        if MMAP_TORCH_FILES:
+            torch_args["mmap"] = True
+
+        if safe_load or ALWAYS_SAFE_LOAD:
+            pl_sd = torch.load(ckpt, map_location=device, weights_only=True, **torch_args)
+        else:
+            logging.warning("WARNING: loading {} unsafely, upgrade your pytorch to 2.4 or newer to load this file safely.".format(ckpt))
+            pl_sd = torch.load(ckpt, map_location=device, pickle_module=checkpoint_pickle)
+        if "state_dict" in pl_sd:
+            sd = pl_sd["state_dict"]
+        else:
+            if len(pl_sd) == 1:
+                key = list(pl_sd.keys())[0]
+                sd = pl_sd[key]
+                if not isinstance(sd, dict):
+                    sd = pl_sd
+            else:
+                sd = pl_sd
+    return (sd, metadata) if return_metadata else sd
 
 
 def retrieve_timesteps(
@@ -171,7 +222,7 @@ def get_obj_from_str(string, reload=False):
             ),
             cls,
         )
-    except:
+    except (ImportError, AttributeError):
         obj = getattr(
             importlib.import_module(
                 module,
