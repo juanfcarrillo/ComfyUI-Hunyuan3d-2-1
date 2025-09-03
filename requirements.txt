@@ -1,23 +1,81 @@
-trimesh
-pymeshlab
-pygltflib
-xatlas
-open3d
-omegaconf
-pyyaml
-configargparse
-transformers
-diffusers
-accelerate
-pytorch-lightning
-opencv-python
-huggingface-hub
-safetensors
-scikit-image
-pybind11
-timm
+runpod>=1.7.6 \
+Pillow==10.4.0 \
+opencv-python==4.10.0.84 \
+transformers==4.45.2 \
+accelerate==0.34.2 \
+diffusers==0.30.3 \
+xformers \
+einops==0.8.0 \
+omegaconf==2.3.0 \
+safetensors==0.4.5 \
+aiohttp==3.10.8 \
+aiofiles==24.1.0 \
+websockets==13.1 \
+kornia==0.7.3 \
+spandrel==0.3.4 \
+soundfile==0.12.1 \
+matplotlib==3.9.2 \
+numba==0.60.0 \
+scipy==1.14.1 \
+psutil==6.0.0 \
+sentencepiece==0.2.0 \
+protobuf==5.28.2 \
+tokenizers==0.20.0 \
+regex==2024.9.11 \
+torchsde \
+av \
+imageio \
+imageio-ffmpeg \
+scikit-image \
+tqdm \
+pyyaml \
+typing-extensions \
+segment-anything \
+insightface \
+onnxruntime \
+timm \
+rembg \
+ultralytics \
+comfyui-frontend-package \
+nunchaku \
+trimesh \
+pymeshlab \
+pytorch_lightning \
+xatlas \
+pygltflib \
+meshlib \
+pybind11 \
+configargparse \
+huggingface-hub \
+numpy
 
-meshlib
 
-spandrel
-comfy
+# trimesh
+# pymeshlab
+# pygltflib
+# xatlas
+# open3d
+# omegaconf
+# pyyaml
+# configargparse
+# transformers
+# diffusers
+# accelerate
+# pytorch-lightning
+# opencv-python
+# huggingface-hub
+# safetensors
+# scikit-image
+# pybind11
+# timm
+
+# meshlib
+
+# spandrel
+# comfy
+
+# safetensors
+# pillow
+# numpy
+
+# torch
