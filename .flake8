@@ -1,7 +1,7 @@
 [flake8]
 # Ignore the "line too long" error (E501) and "line break before binary operator" (W503).
 # Adjust or remove items if you prefer stricter checks.
-ignore = E501, W503
+ignore = E501, W503, E266, E402
 
 # Optional: you can set a maximum line length instead of ignoring E501 entirely.
 # max-line-length = 88

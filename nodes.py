@@ -26,12 +26,12 @@ from hy3dpaint.textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintC
 from hy3dshape.hy3dshape.models.autoencoders import ShapeVAE
 from hy3dshape.hy3dshape.meshlib import postprocessmesh
 
-from .hy3dpaint.utils.torchvision_fix import apply_fix
+from hy3dpaint.utils.torchvision_fix import apply_fix
 
+apply_fix()
 from realesrgan import RealESRGANer
 from basicsr.archs.rrdbnet_arch import RRDBNet
 
-apply_fix()
 
 script_directory = os.path.dirname(os.path.abspath(__file__))
 comfy_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))

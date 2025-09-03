@@ -164,9 +164,9 @@ def main():
 
     # Configure parameters
     config = {
-        "vae_model_name": "your_vae_model.safetensors",  # Update with actual VAE model name
-        "diffusion_model_name": "your_diffusion_model.safetensors",  # Update with actual diffusion model name
-        "input_image_path": "path/to/your/input/image.jpg",  # Update with actual image path
+        "vae_model_name": "model.fp16.ckpt",  # Update with actual VAE model name
+        "diffusion_model_name": "model.fp16.ckpt",  # Update with actual diffusion model name
+        "input_image_path": "assets/mune.png",  # Update with actual image path
         "output_mesh_name": "my_generated_mesh",
         # Generation parameters
         "steps": 50,

@@ -22,3 +22,5 @@ sdist
 develop-eggs
 .installed.cfg
 lib
+
+models
