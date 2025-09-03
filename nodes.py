@@ -3,12 +3,10 @@ from pathlib import Path
 import shutil
 import os
 import gc
-import json
 import torch
 from PIL import Image
 import numpy as np
 import trimesh as Trimesh
-from spandrel import ModelLoader, ImageModelDescriptor
 import meshlib.mrmeshpy as mrmeshpy
 
 from .hy3dshape.hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
@@ -17,7 +15,6 @@ from .hy3dshape.hy3dshape.postprocessors import (
     FloaterRemover,
     DegenerateFaceRemover,
 )
-from .hy3dshape.hy3dshape.rembg import BackgroundRemover
 
 
 # painting
@@ -28,12 +25,9 @@ from .hy3dshape.hy3dshape.models.autoencoders import ShapeVAE
 from .hy3dshape.hy3dshape.meshlib import postprocessmesh
 
 import folder_paths
-import node_helpers
-import hashlib
 
 import comfy.model_management as mm
-from comfy.utils import load_torch_file, ProgressBar
-import comfy.utils
+from comfy.utils import load_torch_file
 
 script_directory = os.path.dirname(os.path.abspath(__file__))
 comfy_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -680,14 +674,11 @@ class Hy3D21VAELoader:
     CATEGORY = "Hunyuan3D21Wrapper"
 
     def loadmodel(self, model_name, vae_config=None):
-        device = mm.get_torch_device()
-        offload_device = mm.unet_offload_device()
-
         model_path = folder_paths.get_full_path("vae", model_name)
 
         vae_sd = load_torch_file(model_path)
 
-        if vae_config == None:
+        if vae_config is not None:
             vae_config = {
                 "num_latents": 4096,
                 "embed_dim": 64,
@@ -797,7 +788,7 @@ class Hy3D21VAEDecode:
             enable_pbar=True,
         )[0]
 
-        if force_offload == True:
+        if force_offload:
             vae.to(offload_device)
 
         outputs.mesh_f = outputs.mesh_f[:, ::-1]
@@ -930,34 +921,34 @@ class Hy3D21MeshUVWrap:
         return (trimesh,)
 
 
-class Hy3D21LoadMesh:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "glb_path": (
-                    "STRING",
-                    {"default": "", "tooltip": "The glb path with mesh to load."},
-                ),
-            }
-        }
+# class Hy3D21LoadMesh:
+#     @classmethod
+#     def INPUT_TYPES(cls):
+#         return {
+#             "required": {
+#                 "glb_path": (
+#                     "STRING",
+#                     {"default": "", "tooltip": "The glb path with mesh to load."},
+#                 ),
+#             }
+#         }
 
-    RETURN_TYPES = ("TRIMESH",)
-    RETURN_NAMES = ("trimesh",)
-    OUTPUT_TOOLTIPS = ("The glb model with mesh to texturize.",)
+#     RETURN_TYPES = ("TRIMESH",)
+#     RETURN_NAMES = ("trimesh",)
+#     OUTPUT_TOOLTIPS = ("The glb model with mesh to texturize.",)
 
-    FUNCTION = "load"
-    CATEGORY = "Hunyuan3D21Wrapper"
-    DESCRIPTION = "Loads a glb model from the given path."
+#     FUNCTION = "load"
+#     CATEGORY = "Hunyuan3D21Wrapper"
+#     DESCRIPTION = "Loads a glb model from the given path."
 
-    def load(self, glb_path):
+#     def load(self, glb_path):
 
-        if not os.path.exists(glb_path):
-            glb_path = os.path.join(folder_paths.get_input_directory(), glb_path)
+#         if not os.path.exists(glb_path):
+#             glb_path = os.path.join(folder_paths.get_input_directory(), glb_path)
 
-        trimesh = Trimesh.load(glb_path, force="mesh")
+#         trimesh = Trimesh.load(glb_path, force="mesh")
 
-        return (trimesh,)
+#         return (trimesh,)
 
 
 class Hy3D21MeshlibDecimate:
@@ -1145,526 +1136,142 @@ class Hy3D21SimpleMeshlibDecimate:
         return (new_mesh,)
 
 
-class Hy3D21GenerateMultiViewsBatch:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "output_folder": ("STRING",),
-                "camera_config": ("HY3D21CAMERA",),
-                "view_size": (
-                    "INT",
-                    {"default": 512, "min": 512, "max": 1024, "step": 256},
-                ),
-                "steps": (
-                    "INT",
-                    {
-                        "default": 10,
-                        "min": 1,
-                        "max": 100,
-                        "step": 1,
-                        "tooltip": "Number of steps",
-                    },
-                ),
-                "guidance_scale": (
-                    "FLOAT",
-                    {
-                        "default": 3.0,
-                        "min": 1,
-                        "max": 10,
-                        "step": 0.1,
-                        "tooltip": "Guidance scale",
-                    },
-                ),
-                "texture_size": (
-                    "INT",
-                    {"default": 1024, "min": 512, "max": 4096, "step": 512},
-                ),
-                "unwrap_mesh": ("BOOLEAN", {"default": True}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0x7FFFFFFF}),
-                "generate_random_seed": ("BOOLEAN", {"default": True}),
-                "remove_background": ("BOOLEAN", {"default": False}),
-                "skip_generated_mesh": ("BOOLEAN", {"default": True}),
-                "upscale_multiviews": (["None", "CustomModel"], {"default": "None"}),
-                "upscale_model_name": (
-                    folder_paths.get_filename_list("upscale_models"),
-                ),
-                "export_multiviews": (
-                    "BOOLEAN",
-                    {
-                        "default": True,
-                        "tooltip": "Multiviews can be used to apply texture to a low poly mesh",
-                    },
-                ),
-                "export_metadata": (
-                    "BOOLEAN",
-                    {
-                        "default": True,
-                        "tooltip": "Exporta json file with camera config and multiviews",
-                    },
-                ),
-            },
-            "optional": {
-                "input_images_folder": ("STRING",),
-                "input_meshes_folder": ("STRING",),
-            },
-        }
+# class Hy3DHighPolyToLowPolyBakeMultiViewsWithMetaData:
+#     @classmethod
+#     def INPUT_TYPES(cls):
+#         return {
+#             "required": {
+#                 "metadata_file": ("STRING",),
+#                 "view_size": ("INT", {"default": 512}),
+#                 "texture_size": ("INT", {"default": 1024}),
+#                 "target_face_nums": ("STRING", {"default": "20000,10000,5000"}),
+#             },
+#         }
+
+#     RETURN_TYPES = ("STRING",)
+#     RETURN_NAMES = ("output_lowpoly_path",)
+#     FUNCTION = "process"
+#     CATEGORY = "Hunyuan3D21Wrapper"
+#     OUTPUT_NODE = True
+
+#     def process(self, metadata_file, view_size, texture_size, target_face_nums):
+#         output_lowpoly_path = ""
+
+#         vertex_inpaint = True
+#         method = "NS"
+
+#         with open(metadata_file, "r") as fr:
+#             loaded_data = json.load(fr)
+#             loaded_metaData = MetaData()
+#             for key, value in loaded_data.items():
+#                 setattr(loaded_metaData, key, value)
+
+#         list_of_faces = parse_string_to_int_list(target_face_nums)
+#         if len(list_of_faces) > 0:
+#             input_dir = os.path.dirname(metadata_file)
+#             mesh_name = loaded_metaData.mesh_file.replace(".glb", "").replace(
+#                 ".obj", ""
+#             )
+#             mesh_file_path = os.path.join(input_dir, loaded_metaData.mesh_file)
+
+#             if os.path.exists(mesh_file_path):
+#                 conf = Hunyuan3DPaintConfig(
+#                     view_size,
+#                     loaded_metaData.camera_config["selected_camera_azims"],
+#                     loaded_metaData.camera_config["selected_camera_elevs"],
+#                     loaded_metaData.camera_config["selected_view_weights"],
+#                     loaded_metaData.camera_config["ortho_scale"],
+#                     texture_size,
+#                 )
+
+#                 highpoly_mesh = Trimesh.load(mesh_file_path, force="mesh")
+#                 highpoly_mesh = Trimesh.Trimesh(
+#                     vertices=highpoly_mesh.vertices, faces=highpoly_mesh.faces
+#                 )  # Remove texture coordinates
+#                 highpoly_faces_num = highpoly_mesh.faces.shape[0]
+
+#                 albedos = []
+#                 mrs = []
+
+#                 if loaded_metaData.albedos_upscaled != None:
+#                     print("Using upscaled pictures ...")
+#                     for file in loaded_metaData.albedos_upscaled:
+#                         albedo_file = os.path.join(input_dir, file)
+#                         albedo = Image.open(albedo_file)
+#                         albedos.append(albedo)
+
+#                     for file in loaded_metaData.mrs_upscaled:
+#                         mr_file = os.path.join(input_dir, file)
+#                         mr = Image.open(mr_file)
+#                         mrs.append(mr)
+#                 else:
+#                     print("Using non-upscaled pictures ...")
+#                     for file in loaded_metaData.albedos:
+#                         albedo_file = os.path.join(input_dir, file)
+#                         albedo = Image.open(albedo_file)
+#                         albedos.append(albedo)
+
+#                     for file in loaded_metaData.mrs:
+#                         mr_file = os.path.join(dir_name, file)
+#                         mr = Image.open(mr_file)
+#                         mrs.append(mr)
+
+#                 output_lowpoly_path = os.path.join(input_dir, "LowPoly")
+
+#                 for target_face_num in list_of_faces:
+#                     print("Processing {target_face_num} faces ...")
+#                     pipeline = Hunyuan3DPaintPipeline(conf)
+#                     output_dir_path = os.path.join(
+#                         input_dir, "LowPoly", f"{target_face_num}"
+#                     )
+#                     os.makedirs(output_dir_path, exist_ok=True)
+
+#                     settings = mrmeshpy.DecimateSettings()
+#                     faces_to_delete = highpoly_faces_num - target_face_num
+#                     settings.maxDeletedFaces = faces_to_delete
+#                     settings.subdivideParts = 16
+#                     settings.packMesh = True
+
+#                     print(f"Decimating to {target_face_num} faces ...")
+#                     lowpoly_mesh = postprocessmesh(
+#                         highpoly_mesh.vertices, highpoly_mesh.faces, settings
+#                     )
+
+#                     print("UV Unwrapping ...")
+#                     lowpoly_mesh = mesh_uv_wrap(lowpoly_mesh)
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("processed_meshes",)
-    FUNCTION = "process"
-    CATEGORY = "Hunyuan3D21Wrapper"
-    DESCRIPTION = "Process all meshes from a folder"
-    OUTPUT_NODE = True
+#                     pipeline.load_mesh(lowpoly_mesh)
 
-    def process(
-        self,
-        output_folder,
-        camera_config,
-        view_size,
-        steps,
-        guidance_scale,
-        texture_size,
-        unwrap_mesh,
-        seed,
-        generate_random_seed,
-        remove_background,
-        skip_generated_mesh,
-        upscale_multiviews,
-        upscale_model_name,
-        export_multiviews,
-        export_metadata,
-        input_images_folder=None,
-        input_meshes_folder=None,
-    ):
-        device = mm.get_torch_device()
-        rembg = BackgroundRemover()
-        processed_meshes = []
+#                     camera_config = loaded_metaData.camera_config
+#                     texture, mask, texture_mr, mask_mr = pipeline.bake_from_multiview(
+#                         albedos,
+#                         mrs,
+#                         camera_config["selected_camera_elevs"],
+#                         camera_config["selected_camera_azims"],
+#                         camera_config["selected_view_weights"],
+#                     )
 
-        vertex_inpaint = True
-        method = "NS"
+#                     albedo, mr = pipeline.inpaint(
+#                         texture, mask, texture_mr, mask_mr, vertex_inpaint, method
+#                     )
 
-        if input_images_folder is not None and input_meshes_folder is not None:
-            files = get_picture_files(input_images_folder)
-            nb_pictures = len(files)
+#                     pipeline.set_texture_albedo(albedo)
+#                     pipeline.set_texture_mr(mr)
 
-            if nb_pictures > 0:
-                conf = Hunyuan3DPaintConfig(
-                    view_size,
-                    camera_config["selected_camera_azims"],
-                    camera_config["selected_camera_elevs"],
-                    camera_config["selected_view_weights"],
-                    camera_config["ortho_scale"],
-                    texture_size,
-                )
+#                     output_glb_path = os.path.join(
+#                         output_dir_path, f"{mesh_name}_{target_face_num}.obj"
+#                     )
 
-                temp_folder_path = os.path.join(comfy_path, "temp")
-                os.makedirs(temp_folder_path, exist_ok=True)
-                temp_output_path = os.path.join(temp_folder_path, "textured_mesh.obj")
+#                     pipeline.save_mesh(output_glb_path)
 
-                pbar = ProgressBar(nb_pictures)
-                for file in files:
-                    image_name = get_filename_without_extension_os_path(file)
-                    input_meshes = get_mesh_files(input_meshes_folder, image_name)
-                    if len(input_meshes) > 0:
-                        if len(input_meshes) > 1:
-                            print(
-                                f"Warning: Multiple meshes found for input_image {image_name} -> Taking the first one"
-                            )
+#                     pipeline.clean_memory()
 
-                        output_file_name = get_filename_without_extension_os_path(file)
-                        output_mesh_folder = os.path.join(
-                            output_folder, output_file_name
-                        )
-                        output_glb_path = Path(
-                            output_mesh_folder, f"{output_file_name}.glb"
-                        )
+#             else:
+#                 print(f"Mesh file does not exist: {mesh_file_path}")
+#         else:
+#             print("target_face_nums is empty")
 
-                        processMesh = True
-
-                        if skip_generated_mesh and os.path.exists(output_glb_path):
-                            processMesh = False
-
-                        if processMesh:
-                            os.makedirs(output_mesh_folder, exist_ok=True)
-
-                            print(f"Processing {file} with {input_meshes[0]} ...")
-                            metaData = MetaData()
-                            metaData.camera_config = camera_config
-                            image = Image.open(file)
-                            if remove_background:
-                                print("Removing background ...")
-                                image = rembg(image)
-
-                            if generate_random_seed:
-                                seed = int.from_bytes(os.urandom(4), "big")
-
-                            trimesh = Trimesh.load(input_meshes[0])
-
-                            paint_pipeline = Hunyuan3DPaintPipeline(conf)
-                            albedo, mr, _, _ = paint_pipeline(
-                                mesh=trimesh,
-                                image_path=image,
-                                output_mesh_path=temp_output_path,
-                                num_steps=steps,
-                                guidance_scale=guidance_scale,
-                                unwrap=unwrap_mesh,
-                                seed=seed,
-                            )
-
-                            if export_multiviews:
-                                metaData.albedos = []
-                                metaData.mrs = []
-
-                                for index, img in enumerate(albedo):
-                                    image_output_path = os.path.join(
-                                        output_mesh_folder, f"Albedo_{index}.png"
-                                    )
-                                    img.save(image_output_path)
-                                    metaData.albedos.append(f"Albedo_{index}.png")
-
-                                for index, img in enumerate(mr):
-                                    image_output_path = os.path.join(
-                                        output_mesh_folder, f"MR_{index}.png"
-                                    )
-                                    img.save(image_output_path)
-                                    metaData.mrs.append(f"MR_{index}.png")
-
-                            if upscale_multiviews == "CustomModel":
-                                model_path = folder_paths.get_full_path_or_raise(
-                                    "upscale_models", upscale_model_name
-                                )
-                                sd = comfy.utils.load_torch_file(
-                                    model_path, safe_load=True
-                                )
-                                if (
-                                    "module.layers.0.residual_group.blocks.0.norm1.weight"
-                                    in sd
-                                ):
-                                    sd = comfy.utils.state_dict_prefix_replace(
-                                        sd, {"module.": ""}
-                                    )
-                                upscale_model = (
-                                    ModelLoader().load_from_state_dict(sd).eval()
-                                )
-
-                                if not isinstance(upscale_model, ImageModelDescriptor):
-                                    print(
-                                        "Cannot Upscale: Upscale model must be a single-image model."
-                                    )
-                                    del upscale_model
-                                    upscale_model = None
-                                else:
-                                    upscale_model.to(device)
-
-                                if upscale_model != None:
-                                    print("Upscaling Albedo ...")
-                                    albedo_tensors = hy3dpaintimages_to_tensor(albedo)
-                                    in_img = albedo_tensors.movedim(-1, -3).to(device)
-
-                                    tile = 512
-                                    overlap = 32
-
-                                    oom = True
-                                    while oom:
-                                        try:
-                                            steps = in_img.shape[
-                                                0
-                                            ] * comfy.utils.get_tiled_scale_steps(
-                                                in_img.shape[3],
-                                                in_img.shape[2],
-                                                tile_x=tile,
-                                                tile_y=tile,
-                                                overlap=overlap,
-                                            )
-                                            pbar = comfy.utils.ProgressBar(steps)
-                                            s = comfy.utils.tiled_scale(
-                                                in_img,
-                                                lambda a: upscale_model(a),
-                                                tile_x=tile,
-                                                tile_y=tile,
-                                                overlap=overlap,
-                                                upscale_amount=upscale_model.scale,
-                                                pbar=pbar,
-                                            )
-                                            oom = False
-                                        except mm.OOM_EXCEPTION as e:
-                                            tile //= 2
-                                            if tile < 128:
-                                                raise e
-
-                                    # upscale_model.to("cpu")
-                                    s = torch.clamp(s.movedim(-3, -1), min=0, max=1.0)
-
-                                    albedo = convert_tensor_images_to_pil(s)
-
-                                    if export_multiviews:
-                                        metaData.albedos_upscaled = []
-                                        for index, img in enumerate(albedo):
-                                            image_output_path = os.path.join(
-                                                output_mesh_folder,
-                                                f"Albedo_Upscaled_{index}.png",
-                                            )
-                                            img.save(image_output_path)
-                                            metaData.albedos_upscaled.append(
-                                                f"Albedo_Upscaled_{index}.png"
-                                            )
-
-                                    print("Upscaling MR ...")
-                                    mr_tensors = hy3dpaintimages_to_tensor(mr)
-                                    in_img = mr_tensors.movedim(-1, -3).to(device)
-
-                                    tile = 512
-                                    overlap = 32
-
-                                    oom = True
-                                    while oom:
-                                        try:
-                                            steps = in_img.shape[
-                                                0
-                                            ] * comfy.utils.get_tiled_scale_steps(
-                                                in_img.shape[3],
-                                                in_img.shape[2],
-                                                tile_x=tile,
-                                                tile_y=tile,
-                                                overlap=overlap,
-                                            )
-                                            pbar = comfy.utils.ProgressBar(steps)
-                                            s = comfy.utils.tiled_scale(
-                                                in_img,
-                                                lambda a: upscale_model(a),
-                                                tile_x=tile,
-                                                tile_y=tile,
-                                                overlap=overlap,
-                                                upscale_amount=upscale_model.scale,
-                                                pbar=pbar,
-                                            )
-                                            oom = False
-                                        except mm.OOM_EXCEPTION as e:
-                                            tile //= 2
-                                            if tile < 128:
-                                                raise e
-
-                                    # upscale_model.to("cpu")
-                                    s = torch.clamp(s.movedim(-3, -1), min=0, max=1.0)
-
-                                    mr = convert_tensor_images_to_pil(s)
-
-                                    if export_multiviews:
-                                        metaData.mrs_upscaled = []
-                                        for index, img in enumerate(mr):
-                                            image_output_path = os.path.join(
-                                                output_mesh_folder,
-                                                f"MR_Upscaled_{index}.png",
-                                            )
-                                            img.save(image_output_path)
-                                            metaData.mrs_upscaled.append(
-                                                f"MR_Upscaled_{index}.png"
-                                            )
-
-                                    del upscale_model
-
-                            print("Baking MultiViews ...")
-                            texture, mask, texture_mr, mask_mr = (
-                                paint_pipeline.bake_from_multiview(
-                                    albedo,
-                                    mr,
-                                    camera_config["selected_camera_elevs"],
-                                    camera_config["selected_camera_azims"],
-                                    camera_config["selected_view_weights"],
-                                )
-                            )
-
-                            albedo, mr = paint_pipeline.inpaint(
-                                texture,
-                                mask,
-                                texture_mr,
-                                mask_mr,
-                                vertex_inpaint,
-                                method,
-                            )
-                            paint_pipeline.set_texture_albedo(albedo)
-                            paint_pipeline.set_texture_mr(mr)
-
-                            output_mesh_path = os.path.join(
-                                comfy_path, "temp", f"{output_file_name}.obj"
-                            )
-                            output_temp_path = paint_pipeline.save_mesh(
-                                output_mesh_path
-                            )
-                            shutil.copyfile(output_temp_path, output_glb_path)
-                            metaData.mesh_file = f"{output_file_name}.glb"
-
-                            if export_metadata:
-                                output_metadata_path = os.path.join(
-                                    output_mesh_folder, "meta_data.json"
-                                )
-                                with open(output_metadata_path, "w") as fw:
-                                    json.dump(metaData.__dict__, indent="\t", fp=fw)
-
-                            processed_meshes.append(output_glb_path)
-
-                            paint_pipeline.clean_memory()
-                            del paint_pipeline
-
-                            mm.soft_empty_cache()
-                            torch.cuda.empty_cache()
-                            gc.collect()
-                        else:
-                            print(f"Skipping {file}")
-                    else:
-                        print(f"Error: No mesh found for input image {image_name}")
-
-                    pbar.update(1)
-
-            else:
-                print("No image found in input_images_folder")
-        else:
-            print("Nothing to process")
-
-        mm.soft_empty_cache()
-        torch.cuda.empty_cache()
-        gc.collect()
-
-        return (processed_meshes,)
-
-
-class Hy3DHighPolyToLowPolyBakeMultiViewsWithMetaData:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "metadata_file": ("STRING",),
-                "view_size": ("INT", {"default": 512}),
-                "texture_size": ("INT", {"default": 1024}),
-                "target_face_nums": ("STRING", {"default": "20000,10000,5000"}),
-            },
-        }
-
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("output_lowpoly_path",)
-    FUNCTION = "process"
-    CATEGORY = "Hunyuan3D21Wrapper"
-    OUTPUT_NODE = True
-
-    def process(self, metadata_file, view_size, texture_size, target_face_nums):
-        output_lowpoly_path = ""
-
-        vertex_inpaint = True
-        method = "NS"
-
-        with open(metadata_file, "r") as fr:
-            loaded_data = json.load(fr)
-            loaded_metaData = MetaData()
-            for key, value in loaded_data.items():
-                setattr(loaded_metaData, key, value)
-
-        list_of_faces = parse_string_to_int_list(target_face_nums)
-        if len(list_of_faces) > 0:
-            input_dir = os.path.dirname(metadata_file)
-            mesh_name = loaded_metaData.mesh_file.replace(".glb", "").replace(
-                ".obj", ""
-            )
-            mesh_file_path = os.path.join(input_dir, loaded_metaData.mesh_file)
-
-            if os.path.exists(mesh_file_path):
-                conf = Hunyuan3DPaintConfig(
-                    view_size,
-                    loaded_metaData.camera_config["selected_camera_azims"],
-                    loaded_metaData.camera_config["selected_camera_elevs"],
-                    loaded_metaData.camera_config["selected_view_weights"],
-                    loaded_metaData.camera_config["ortho_scale"],
-                    texture_size,
-                )
-
-                highpoly_mesh = Trimesh.load(mesh_file_path, force="mesh")
-                highpoly_mesh = Trimesh.Trimesh(
-                    vertices=highpoly_mesh.vertices, faces=highpoly_mesh.faces
-                )  # Remove texture coordinates
-                highpoly_faces_num = highpoly_mesh.faces.shape[0]
-
-                albedos = []
-                mrs = []
-
-                if loaded_metaData.albedos_upscaled != None:
-                    print("Using upscaled pictures ...")
-                    for file in loaded_metaData.albedos_upscaled:
-                        albedo_file = os.path.join(input_dir, file)
-                        albedo = Image.open(albedo_file)
-                        albedos.append(albedo)
-
-                    for file in loaded_metaData.mrs_upscaled:
-                        mr_file = os.path.join(input_dir, file)
-                        mr = Image.open(mr_file)
-                        mrs.append(mr)
-                else:
-                    print("Using non-upscaled pictures ...")
-                    for file in loaded_metaData.albedos:
-                        albedo_file = os.path.join(input_dir, file)
-                        albedo = Image.open(albedo_file)
-                        albedos.append(albedo)
-
-                    for file in loaded_metaData.mrs:
-                        mr_file = os.path.join(dir_name, file)
-                        mr = Image.open(mr_file)
-                        mrs.append(mr)
-
-                output_lowpoly_path = os.path.join(input_dir, "LowPoly")
-
-                for target_face_num in list_of_faces:
-                    print("Processing {target_face_num} faces ...")
-                    pipeline = Hunyuan3DPaintPipeline(conf)
-                    output_dir_path = os.path.join(
-                        input_dir, "LowPoly", f"{target_face_num}"
-                    )
-                    os.makedirs(output_dir_path, exist_ok=True)
-
-                    settings = mrmeshpy.DecimateSettings()
-                    faces_to_delete = highpoly_faces_num - target_face_num
-                    settings.maxDeletedFaces = faces_to_delete
-                    settings.subdivideParts = 16
-                    settings.packMesh = True
-
-                    print(f"Decimating to {target_face_num} faces ...")
-                    lowpoly_mesh = postprocessmesh(
-                        highpoly_mesh.vertices, highpoly_mesh.faces, settings
-                    )
-
-                    print("UV Unwrapping ...")
-                    lowpoly_mesh = mesh_uv_wrap(lowpoly_mesh)
-
-                    pipeline.load_mesh(lowpoly_mesh)
-
-                    camera_config = loaded_metaData.camera_config
-                    texture, mask, texture_mr, mask_mr = pipeline.bake_from_multiview(
-                        albedos,
-                        mrs,
-                        camera_config["selected_camera_elevs"],
-                        camera_config["selected_camera_azims"],
-                        camera_config["selected_view_weights"],
-                    )
-
-                    albedo, mr = pipeline.inpaint(
-                        texture, mask, texture_mr, mask_mr, vertex_inpaint, method
-                    )
-
-                    pipeline.set_texture_albedo(albedo)
-                    pipeline.set_texture_mr(mr)
-
-                    output_glb_path = os.path.join(
-                        output_dir_path, f"{mesh_name}_{target_face_num}.obj"
-                    )
-
-                    pipeline.save_mesh(output_glb_path)
-
-                    pipeline.clean_memory()
-
-            else:
-                print(f"Mesh file does not exist: {mesh_file_path}")
-        else:
-            print("target_face_nums is empty")
-
-        return (output_lowpoly_path,)
+#         return (output_lowpoly_path,)
 
 
 NODE_CLASS_MAPPINGS = {
@@ -1678,10 +1285,9 @@ NODE_CLASS_MAPPINGS = {
     "Hy3D21PostprocessMesh": Hy3D21PostprocessMesh,
     "Hy3D21ExportMesh": Hy3D21ExportMesh,
     "Hy3D21MeshUVWrap": Hy3D21MeshUVWrap,
-    "Hy3D21LoadMesh": Hy3D21LoadMesh,
+    # "Hy3D21LoadMesh": Hy3D21LoadMesh,
     "Hy3D21MeshlibDecimate": Hy3D21MeshlibDecimate,
-    "Hy3D21GenerateMultiViewsBatch": Hy3D21GenerateMultiViewsBatch,
-    "Hy3DHighPolyToLowPolyBakeMultiViewsWithMetaData": Hy3DHighPolyToLowPolyBakeMultiViewsWithMetaData,
+    # "Hy3DHighPolyToLowPolyBakeMultiViewsWithMetaData": Hy3DHighPolyToLowPolyBakeMultiViewsWithMetaData,
     "Hy3D21SimpleMeshlibDecimate": Hy3D21SimpleMeshlibDecimate,
 }
 
@@ -1698,7 +1304,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "Hy3D21MeshUVWrap": "Hunyuan 3D 2.1 Mesh UV Wrap",  # This
     # "Hy3D21LoadMesh": "Hunyuan 3D 2.1 Load Mesh",
     # "Hy3D21MeshlibDecimate": "Hunyuan 3D 2.1 Meshlib Decimation",
-    # "Hy3D21GenerateMultiViewsBatch": "Hunyuan 3D 2.1 MultiViews Generator Batch",
     # "Hy3DHighPolyToLowPolyBakeMultiViewsWithMetaData": "Hunyuan 3D 2.1 HighPoly to LowPoly Bake MultiViews With MetaData",
     # "Hy3D21SimpleMeshlibDecimate": "Hunyuan 3D 2.1 Simple Meshlib Decimation"
 }
