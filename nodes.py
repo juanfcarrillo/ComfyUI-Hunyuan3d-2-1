@@ -3,11 +3,13 @@ from pathlib import Path
 import shutil
 import os
 import gc
+
 import torch
 from PIL import Image
 import numpy as np
 import trimesh as Trimesh
 import meshlib.mrmeshpy as mrmeshpy
+from safetensors.torch import load_file as _safetensors_load
 
 from .hy3dshape.hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
 from .hy3dshape.hy3dshape.postprocessors import (
@@ -16,7 +18,6 @@ from .hy3dshape.hy3dshape.postprocessors import (
     DegenerateFaceRemover,
 )
 
-
 # painting
 from .hy3dpaint.utils.uvwrap_utils import mesh_uv_wrap
 from .hy3dpaint.textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
@@ -24,10 +25,120 @@ from .hy3dshape.hy3dshape.models.autoencoders import ShapeVAE
 
 from .hy3dshape.hy3dshape.meshlib import postprocessmesh
 
-import folder_paths
+# Replace folder_paths import with compatibility shim
+try:
+    import folder_paths
+except ImportError:
+    # Fallback implementation when ComfyUI is not available
+    class FolderPathsShim:
+        def __init__(self):
+            self.base_path = script_directory
+            self.models_dir = os.path.join(self.base_path, "models")
+            self.output_dir = os.path.join(self.base_path, "output")
+            self.input_dir = os.path.join(self.base_path, "input")
 
-import comfy.model_management as mm
-from comfy.utils import load_torch_file
+        def get_filename_list(self, subfolder):
+            path = os.path.join(self.models_dir, subfolder)
+            if os.path.exists(path):
+                return [
+                    f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))
+                ]
+            return []
+
+        def get_full_path(self, subfolder, filename):
+            return os.path.join(self.models_dir, subfolder, filename)
+
+        def get_output_directory(self):
+            os.makedirs(self.output_dir, exist_ok=True)
+            return self.output_dir
+
+        def get_input_directory(self):
+            os.makedirs(self.input_dir, exist_ok=True)
+            return self.input_dir
+
+        def get_save_image_path(self, filename_prefix, output_dir):
+            # Parse filename_prefix for subfolder
+            parts = filename_prefix.split("/")
+            if len(parts) > 1:
+                subfolder = os.path.join(*parts[:-1])
+                prefix = parts[-1]
+            else:
+                subfolder = ""
+                prefix = filename_prefix
+
+            full_output_folder = (
+                os.path.join(output_dir, subfolder) if subfolder else output_dir
+            )
+            os.makedirs(full_output_folder, exist_ok=True)
+
+            # Find next available counter
+            existing_files = [
+                f for f in os.listdir(full_output_folder) if f.startswith(prefix)
+            ]
+            counter = len(existing_files) + 1
+
+            return (full_output_folder, prefix, counter, subfolder, filename_prefix)
+
+    folder_paths = FolderPathsShim()
+
+# Replace comfy.model_management import with compatibility shim
+try:
+    import comfy.model_management as mm  # noqa
+except ImportError:
+    # Fallback implementation when ComfyUI is not available
+    class ModelManagementShim:
+        OOM_EXCEPTION = RuntimeError
+
+        def get_torch_device(self):
+            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        def unet_offload_device(self):
+            return torch.device("cpu")
+
+        def soft_empty_cache(self):
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+
+    mm = ModelManagementShim()
+
+
+def load_torch_file(path, map_location="cpu", safe_load=True):
+    """
+    Compatibility loader for torch/safetensors checkpoints.
+
+    Supports: .safetensors (via safetensors), .pt/.pth/.ckpt (via torch.load).
+    If the loaded object is a dict and contains common wrapper keys like
+    'state_dict', 'model' or 'sd', the inner dict is returned. If keys are
+    prefixed with 'module.' they will be stripped.
+    """
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".safetensors":
+        return _safetensors_load(path, device=map_location)
+
+    # Fallback to torch.load for other checkpoint types
+    data = torch.load(path, map_location=map_location)
+
+    # Unwrap common containers
+    if isinstance(data, dict):
+        for key in ("state_dict", "model", "sd"):
+            if key in data and isinstance(data[key], dict):
+                data = data[key]
+                break
+
+        # Strip DataParallel 'module.' prefixes
+        if isinstance(data, dict):
+            if any(
+                isinstance(k, str) and k.startswith("module.")
+                for k in list(data.keys())
+            ):
+                data = {
+                    (k.replace("module.", "") if isinstance(k, str) else k): v
+                    for k, v in data.items()
+                }
+
+    return data
+
 
 script_directory = os.path.dirname(os.path.abspath(__file__))
 comfy_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
