@@ -1,0 +1,9 @@
+
+[MESSAGES CONTROL]
+# Disable missing-function-docstring (C0116) and line-too-long (C0301).
+# Remove or adjust these if you prefer stricter checks. You can add more disables
+# separated by commas, or configure other pylint options here.
+
+# Also disable missing-class-docstring (C0115).
+disable = C0103, C0115, C0116, C0301
+
