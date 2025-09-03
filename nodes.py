@@ -10,6 +10,10 @@ import numpy as np
 import trimesh as Trimesh
 import meshlib.mrmeshpy as mrmeshpy
 from safetensors.torch import load_file as _safetensors_load
+from cv2 import cvtColor, COLOR_RGB2BGR, COLOR_BGR2RGB
+
+from realesrgan import RealESRGANer
+from basicsr.archs.rrdbnet_arch import RRDBNet
 
 from .hy3dshape.hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
 from .hy3dshape.hy3dshape.postprocessors import (
@@ -22,85 +26,106 @@ from .hy3dshape.hy3dshape.postprocessors import (
 from .hy3dpaint.utils.uvwrap_utils import mesh_uv_wrap
 from .hy3dpaint.textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
 from .hy3dshape.hy3dshape.models.autoencoders import ShapeVAE
-
 from .hy3dshape.hy3dshape.meshlib import postprocessmesh
 
+# try:
+# except ImportError:
+#     # Fallback for standalone usage
+#     try:
+#         from hy3dshape.hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
+#         from hy3dshape.hy3dshape.postprocessors import (
+#             FaceReducer,
+#             FloaterRemover,
+#             DegenerateFaceRemover,
+#         )
+
+#         # painting
+#         from hy3dpaint.utils.uvwrap_utils import mesh_uv_wrap
+#         from hy3dpaint.textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
+#         from hy3dshape.hy3dshape.models.autoencoders import ShapeVAE
+#         from hy3dshape.hy3dshape.meshlib import postprocessmesh
+#     except ImportError as e:
+#         print(f"Warning: Could not import Hunyuan3D modules: {e}")
+#         print("Make sure the hy3dshape and hy3dpaint directories are available")
+
+script_directory = os.path.dirname(os.path.abspath(__file__))
+comfy_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+diffusions_dir = os.path.join(comfy_path, "models", "diffusers")
+
 # Replace folder_paths import with compatibility shim
-try:
-    import folder_paths
-except ImportError:
-    # Fallback implementation when ComfyUI is not available
-    class FolderPathsShim:
-        def __init__(self):
-            self.base_path = script_directory
-            self.models_dir = os.path.join(self.base_path, "models")
-            self.output_dir = os.path.join(self.base_path, "output")
-            self.input_dir = os.path.join(self.base_path, "input")
 
-        def get_filename_list(self, subfolder):
-            path = os.path.join(self.models_dir, subfolder)
-            if os.path.exists(path):
-                return [
-                    f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))
-                ]
-            return []
 
-        def get_full_path(self, subfolder, filename):
-            return os.path.join(self.models_dir, subfolder, filename)
+class FolderPathsShim:
+    def __init__(self):
+        self.base_path = script_directory
+        self.models_dir = os.path.join(self.base_path, "models")
+        self.output_dir = os.path.join(self.base_path, "output")
+        self.input_dir = os.path.join(self.base_path, "input")
 
-        def get_output_directory(self):
-            os.makedirs(self.output_dir, exist_ok=True)
-            return self.output_dir
-
-        def get_input_directory(self):
-            os.makedirs(self.input_dir, exist_ok=True)
-            return self.input_dir
-
-        def get_save_image_path(self, filename_prefix, output_dir):
-            # Parse filename_prefix for subfolder
-            parts = filename_prefix.split("/")
-            if len(parts) > 1:
-                subfolder = os.path.join(*parts[:-1])
-                prefix = parts[-1]
-            else:
-                subfolder = ""
-                prefix = filename_prefix
-
-            full_output_folder = (
-                os.path.join(output_dir, subfolder) if subfolder else output_dir
-            )
-            os.makedirs(full_output_folder, exist_ok=True)
-
-            # Find next available counter
-            existing_files = [
-                f for f in os.listdir(full_output_folder) if f.startswith(prefix)
+    def get_filename_list(self, subfolder):
+        path = os.path.join(self.models_dir, subfolder)
+        if os.path.exists(path):
+            return [
+                f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))
             ]
-            counter = len(existing_files) + 1
+        return []
 
-            return (full_output_folder, prefix, counter, subfolder, filename_prefix)
+    def get_full_path(self, subfolder, filename):
+        return os.path.join(self.models_dir, subfolder, filename)
 
-    folder_paths = FolderPathsShim()
+    def get_output_directory(self):
+        os.makedirs(self.output_dir, exist_ok=True)
+        return self.output_dir
+
+    def get_input_directory(self):
+        os.makedirs(self.input_dir, exist_ok=True)
+        return self.input_dir
+
+    def get_save_image_path(self, filename_prefix, output_dir):
+        # Parse filename_prefix for subfolder
+        parts = filename_prefix.split("/")
+        if len(parts) > 1:
+            subfolder = os.path.join(*parts[:-1])
+            prefix = parts[-1]
+        else:
+            subfolder = ""
+            prefix = filename_prefix
+
+        full_output_folder = (
+            os.path.join(output_dir, subfolder) if subfolder else output_dir
+        )
+        os.makedirs(full_output_folder, exist_ok=True)
+
+        # Find next available counter
+        existing_files = [
+            f for f in os.listdir(full_output_folder) if f.startswith(prefix)
+        ]
+        counter = len(existing_files) + 1
+
+        return (full_output_folder, prefix, counter, subfolder, filename_prefix)
+
+
+folder_paths = FolderPathsShim()
+
 
 # Replace comfy.model_management import with compatibility shim
-try:
-    import comfy.model_management as mm  # noqa
-except ImportError:
-    # Fallback implementation when ComfyUI is not available
-    class ModelManagementShim:
-        OOM_EXCEPTION = RuntimeError
+# Fallback implementation when ComfyUI is not available
+class ModelManagementShim:
+    OOM_EXCEPTION = RuntimeError
 
-        def get_torch_device(self):
-            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    def get_torch_device(self):
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        def unet_offload_device(self):
-            return torch.device("cpu")
+    def unet_offload_device(self):
+        return torch.device("cpu")
 
-        def soft_empty_cache(self):
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
+    def soft_empty_cache(self):
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
 
-    mm = ModelManagementShim()
+
+mm = ModelManagementShim()
 
 
 def load_torch_file(path, map_location="cpu", safe_load=True):
@@ -242,6 +267,8 @@ def _convert_texture_format(
     else:
         if isinstance(tex, np.ndarray):
             tex = torch.from_numpy(tex)
+        elif isinstance(tex, Image.Image):
+            tex = torch.from_numpy(np.array(tex).astype(np.float32) / 255.0)
         return tex.to(device).float()
 
 
@@ -700,7 +727,7 @@ class Hy3D21VAELoader:
 
         vae_sd = load_torch_file(model_path)
 
-        if vae_config is not None:
+        if vae_config is None:
             vae_config = {
                 "num_latents": 4096,
                 "embed_dim": 64,
@@ -720,7 +747,8 @@ class Hy3D21VAELoader:
                 "pc_size": 81920,
                 "pc_sharpedge_size": 0,
             }
-
+        if not isinstance(vae_config, dict):
+            raise ValueError("vae_config must be a dict with string keys")
         vae = ShapeVAE(**vae_config)
         vae.load_state_dict(vae_sd)
         vae.eval().to(torch.float16)
@@ -1158,6 +1186,127 @@ class Hy3D21SimpleMeshlibDecimate:
         return (new_mesh,)
 
 
+class Hy3D21UpscaleModelLoader:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model_name": (
+                    folder_paths.get_filename_list("upscale_models"),
+                    {"tooltip": "These models are loaded from 'models/upscale_models'"},
+                ),
+            },
+        }
+
+    RETURN_TYPES = ("UPSCALE_MODEL",)
+    RETURN_NAMES = ("upscale_model",)
+    FUNCTION = "loadmodel"
+    CATEGORY = "Hunyuan3D21Wrapper"
+
+    def loadmodel(self, model_name):
+        model_path = folder_paths.get_full_path("upscale_models", model_name)
+
+        # Determine model type and scale based on filename
+        if "x4plus" in model_name.lower():
+            model = RRDBNet(
+                num_in_ch=3,
+                num_out_ch=3,
+                num_feat=64,
+                num_block=23,
+                num_grow_ch=32,
+                scale=4,
+            )
+            scale = 4
+        elif "x2plus" in model_name.lower():
+            model = RRDBNet(
+                num_in_ch=3,
+                num_out_ch=3,
+                num_feat=64,
+                num_block=23,
+                num_grow_ch=32,
+                scale=2,
+            )
+            scale = 2
+        elif "x8" in model_name.lower():
+            model = RRDBNet(
+                num_in_ch=3,
+                num_out_ch=3,
+                num_feat=64,
+                num_block=23,
+                num_grow_ch=32,
+                scale=8,
+            )
+            scale = 8
+        else:
+            # Default to x4
+            model = RRDBNet(
+                num_in_ch=3,
+                num_out_ch=3,
+                num_feat=64,
+                num_block=23,
+                num_grow_ch=32,
+                scale=4,
+            )
+            scale = 4
+
+        # Create RealESRGAN upsampler
+        upsampler = RealESRGANer(
+            scale=scale,
+            model_path=model_path,
+            model=model,
+            tile=0,
+            tile_pad=10,
+            pre_pad=0,
+            half=False,
+            gpu_id=None,
+        )
+
+        return (upsampler,)
+
+
+class Hy3D21UpscaleImage:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "upscale_model": ("UPSCALE_MODEL",),
+                "image": ("IMAGE",),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("image",)
+    FUNCTION = "upscale"
+    CATEGORY = "Hunyuan3D21Wrapper"
+
+    def upscale(self, upscale_model, image):
+        # Convert tensor to PIL for processing
+        pil_image = tensor2pil(image.squeeze(0))
+
+        # Convert PIL to numpy array (BGR format for cv2)
+        img_np = np.array(pil_image)
+        if img_np.shape[2] == 3:  # RGB to BGR
+            img_np = cvtColor(img_np, COLOR_RGB2BGR)
+
+        # Upscale the image
+        try:
+            output, _ = upscale_model.enhance(img_np, outscale=upscale_model.scale)
+        except Exception as e:
+            print(f"Upscaling failed: {e}")
+            # Fallback to original image
+            output = img_np
+
+        # Convert back to RGB
+        if output.shape[2] == 3:
+            output = cvtColor(output, COLOR_BGR2RGB)
+
+        # Convert to PIL and then to tensor
+        output_pil = Image.fromarray(output)
+        upscaled_tensor = pil2tensor(output_pil)
+
+        return (upscaled_tensor,)
+
+
 # class Hy3DHighPolyToLowPolyBakeMultiViewsWithMetaData:
 #     @classmethod
 #     def INPUT_TYPES(cls):
@@ -1311,6 +1460,8 @@ NODE_CLASS_MAPPINGS = {
     "Hy3D21MeshlibDecimate": Hy3D21MeshlibDecimate,
     # "Hy3DHighPolyToLowPolyBakeMultiViewsWithMetaData": Hy3DHighPolyToLowPolyBakeMultiViewsWithMetaData,
     "Hy3D21SimpleMeshlibDecimate": Hy3D21SimpleMeshlibDecimate,
+    "Hy3D21UpscaleModelLoader": Hy3D21UpscaleModelLoader,
+    "Hy3D21UpscaleImage": Hy3D21UpscaleImage,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -1324,6 +1475,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "Hy3D21PostprocessMesh": "Hunyuan 3D 2.1 Post Process Trimesh",  # This
     "Hy3D21ExportMesh": "Hunyuan 3D 2.1 Export Mesh",  # This
     "Hy3D21MeshUVWrap": "Hunyuan 3D 2.1 Mesh UV Wrap",  # This
+    "Hy3D21UpscaleModelLoader": "Hunyuan 3D 2.1 Upscale Model Loader",
+    "Hy3D21UpscaleImage": "Hunyuan 3D 2.1 Upscale Image",
     # "Hy3D21LoadMesh": "Hunyuan 3D 2.1 Load Mesh",
     # "Hy3D21MeshlibDecimate": "Hunyuan 3D 2.1 Meshlib Decimation",
     # "Hy3DHighPolyToLowPolyBakeMultiViewsWithMetaData": "Hunyuan 3D 2.1 HighPoly to LowPoly Bake MultiViews With MetaData",

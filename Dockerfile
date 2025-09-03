@@ -83,7 +83,15 @@ RUN pip install --no-cache-dir \
     xatlas \
     pygltflib \
     meshlib \
-    pybind11
+    pybind11 \
+    configargparse \
+    huggingface-hub \
+    numpy \
+    realesrgan \
+    basicsr \
+    facexlib \
+    gfpgan \
+    torchvision
 
 # Clone ComfyUI
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git /app/ComfyUI
