@@ -78,11 +78,8 @@ safetensors
 pillow
 numpy
 
-torch
 
 realesrgan
 basicsr
 facexlib
 gfpgan
-
-torchvision
