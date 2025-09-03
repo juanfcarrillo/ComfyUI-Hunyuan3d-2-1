@@ -70,82 +70,6 @@ def hy3dpaintimages_to_tensor(images):
     return tensors
 
 
-def get_picture_files(folder_path):
-    """
-    Retrieves all picture files (based on common extensions) from a given folder.
-
-    Args:
-        folder_path (str): The path to the folder to search.
-
-    Returns:
-        list: A list of full paths to the picture files found.
-    """
-    picture_extensions = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp")
-    picture_files = []
-
-    if not os.path.isdir(folder_path):
-        print(f"Error: Folder '{folder_path}' not found.")
-        return []
-
-    for entry_name in os.listdir(folder_path):
-        full_path = os.path.join(folder_path, entry_name)
-
-        # Check if the entry is actually a file (and not a sub-directory)
-        if os.path.isfile(full_path):
-            _, file_extension = os.path.splitext(entry_name)
-            if file_extension.lower().endswith(picture_extensions):
-                picture_files.append(full_path)
-    return picture_files
-
-
-def get_mesh_files(folder_path, name_filter=None):
-    """
-    Retrieves all picture files (based on common extensions) from a given folder.
-
-    Args:
-        folder_path (str): The path to the folder to search.
-
-    Returns:
-        list: A list of full paths to the picture files found.
-    """
-    mesh_extensions = (".obj", ".glb")
-    mesh_files = []
-
-    if not os.path.isdir(folder_path):
-        print(f"Error: Folder '{folder_path}' not found.")
-        return []
-
-    for entry_name in os.listdir(folder_path):
-        full_path = os.path.join(folder_path, entry_name)
-
-        # Check if the entry is actually a file (and not a sub-directory)
-        if os.path.isfile(full_path):
-            file_name, file_extension = os.path.splitext(entry_name)
-            if file_extension.lower().endswith(mesh_extensions):
-                if name_filter is None or name_filter.lower() in file_name.lower():
-                    mesh_files.append(full_path)
-    return mesh_files
-
-
-def get_filename_without_extension_os_path(full_file_path):
-    """
-    Extracts the filename without its extension from a full file path using os.path.
-
-    Args:
-        full_file_path (str): The complete path to the file.
-
-    Returns:
-        str: The filename without its extension.
-    """
-    # 1. Get the base name (filename with extension)
-    base_name = os.path.basename(full_file_path)
-
-    # 2. Split the base name into root (filename without ext) and extension
-    file_name_without_ext, _ = os.path.splitext(base_name)
-
-    return file_name_without_ext
-
-
 def _convert_texture_format(
     tex: Union[np.ndarray, torch.Tensor, Image.Image],
     texture_size: Tuple[int, int],
@@ -234,19 +158,6 @@ def tensor2pil(image):
 # PIL to Tensor
 def pil2tensor(image):
     return torch.from_numpy(np.array(image).astype(np.float32) / 255.0).unsqueeze(0)
-
-
-def numpy2pil(image):
-    return Image.fromarray(np.clip(255.0 * image.squeeze(), 0, 255).astype(np.uint8))
-
-
-def convert_pil_images_to_tensor(images):
-    tensor_array = []
-
-    for image in images:
-        tensor_array.append(pil2tensor(image))
-
-    return tensor_array
 
 
 def convert_tensor_images_to_pil(images):
