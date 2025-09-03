@@ -811,6 +811,7 @@ class Hy3D21VAEDecode:
 
         vae.enable_flashvdm_decoder(enabled=enable_flash_vdm, mc_algo=mc_algo)
 
+        latents = latents.clone().detach()
         latents = vae.decode(latents)
         outputs = vae.latents2mesh(
             latents,

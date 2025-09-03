@@ -16,6 +16,7 @@ import copy
 import importlib
 import inspect
 import os
+import sys
 from typing import List, Optional, Union
 
 import numpy as np
@@ -34,7 +35,7 @@ from .utils import logger, synchronize_timer, smart_load_model
 from safetensors.torch import load_file as _safetensors_load
 import safetensors
 import logging
-import checkpoint_pickle
+import hy3dshape.hy3dshape.checkpoint_pickle.checkpoint_pickle as checkpoint_pickle
 
 
 # def load_torch_file(path, map_location="cpu", safe_load=True):
@@ -210,28 +211,20 @@ def get_obj_from_str(string, reload=False):
     if reload:
         module_imp = importlib.import_module(module)
         importlib.reload(module_imp)
+    
+    # Add the root path to sys.path for dynamic imports
+    root_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    if root_path not in sys.path:
+        sys.path.insert(0, root_path)
+    
+    # Handle relative imports by stripping leading dots
+    if module.startswith("."):
+        module = module.lstrip(".")
+    
     try:
-        obj = getattr(
-            importlib.import_module(
-                module,
-                package=os.path.basename(
-                    os.path.dirname(
-                        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                    )
-                ),
-            ),
-            cls,
-        )
+        obj = getattr(importlib.import_module(module), cls)
     except (ImportError, AttributeError):
-        obj = getattr(
-            importlib.import_module(
-                module,
-                package=os.path.dirname(
-                    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                ),
-            ),
-            cls,
-        )
+        obj = getattr(importlib.import_module(module), cls)
     return obj
 
 
