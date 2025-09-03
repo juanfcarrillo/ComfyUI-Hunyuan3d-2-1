@@ -10,43 +10,28 @@ import numpy as np
 import trimesh as Trimesh
 import meshlib.mrmeshpy as mrmeshpy
 from safetensors.torch import load_file as _safetensors_load
-from cv2 import cvtColor, COLOR_RGB2BGR, COLOR_BGR2RGB
+from cv2 import cvtColor, COLOR_RGB2BGR, COLOR_BGR2RGB  # noqa
 
-from realesrgan import RealESRGANer
-from basicsr.archs.rrdbnet_arch import RRDBNet
 
-from .hy3dshape.hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
-from .hy3dshape.hy3dshape.postprocessors import (
+from hy3dshape.hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
+from hy3dshape.hy3dshape.postprocessors import (
     FaceReducer,
     FloaterRemover,
     DegenerateFaceRemover,
 )
 
 # painting
-from .hy3dpaint.utils.uvwrap_utils import mesh_uv_wrap
-from .hy3dpaint.textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
-from .hy3dshape.hy3dshape.models.autoencoders import ShapeVAE
-from .hy3dshape.hy3dshape.meshlib import postprocessmesh
+from hy3dpaint.utils.uvwrap_utils import mesh_uv_wrap
+from hy3dpaint.textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
+from hy3dshape.hy3dshape.models.autoencoders import ShapeVAE
+from hy3dshape.hy3dshape.meshlib import postprocessmesh
 
-# try:
-# except ImportError:
-#     # Fallback for standalone usage
-#     try:
-#         from hy3dshape.hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
-#         from hy3dshape.hy3dshape.postprocessors import (
-#             FaceReducer,
-#             FloaterRemover,
-#             DegenerateFaceRemover,
-#         )
+from .hy3dpaint.utils.torchvision_fix import apply_fix
 
-#         # painting
-#         from hy3dpaint.utils.uvwrap_utils import mesh_uv_wrap
-#         from hy3dpaint.textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
-#         from hy3dshape.hy3dshape.models.autoencoders import ShapeVAE
-#         from hy3dshape.hy3dshape.meshlib import postprocessmesh
-#     except ImportError as e:
-#         print(f"Warning: Could not import Hunyuan3D modules: {e}")
-#         print("Make sure the hy3dshape and hy3dpaint directories are available")
+from realesrgan import RealESRGANer
+from basicsr.archs.rrdbnet_arch import RRDBNet
+
+apply_fix()
 
 script_directory = os.path.dirname(os.path.abspath(__file__))
 comfy_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))

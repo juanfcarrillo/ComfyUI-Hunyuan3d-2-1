@@ -5,5 +5,5 @@
 # separated by commas, or configure other pylint options here.
 
 # Also disable missing-class-docstring (C0115).
-disable = C0103, C0115, C0116, C0301, W0718
+disable = C0103, C0115, C0116, C0301, W0718, C0415, C0413, C0411, C0412, E0611
 
