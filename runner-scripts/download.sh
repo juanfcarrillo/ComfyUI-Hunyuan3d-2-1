@@ -11,9 +11,8 @@ if [ ! -d "/root/app/models" ] ; then
   mkdir -p /root/app/models
 fi
 
-cd /root/app/models
 aria2c \
-  --input-file=/runner-scripts/download-models.txt \
+  --input-file=/app/runner-scripts/download-models.txt \
   --allow-overwrite=false \
   --auto-file-renaming=false \
   --continue=true \
