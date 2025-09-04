@@ -477,6 +477,9 @@ class Hy3DMultiViewsGenerator:
         unwrap_mesh,
         seed,
     ):
+        device = mm.get_torch_device()
+        offload_device = mm.unet_offload_device()
+
         seed = seed % (2**32)
 
         conf = Hunyuan3DPaintConfig(
@@ -487,6 +490,7 @@ class Hy3DMultiViewsGenerator:
             camera_config["ortho_scale"],
             texture_size,
         )
+
         paint_pipeline = Hunyuan3DPaintPipeline(conf)
 
         image = tensor2pil(image)

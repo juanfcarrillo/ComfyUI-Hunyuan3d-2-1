@@ -45,6 +45,7 @@ class ModelManagementShim:
     def soft_empty_cache(self):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
             torch.cuda.synchronize()
 
 
@@ -129,6 +130,7 @@ class Hunyuan3DPaintPipeline:
             raster_mode=self.config.raster_mode,
             ortho_scale=self.config.ortho_scale,
         )
+        print(f"Rendering with config {self.config}")
         self.view_processor = ViewProcessor(self.config, self.render)
         self.models = {}
         # self.load_models()
