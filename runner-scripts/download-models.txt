@@ -3,15 +3,15 @@
 # Upscale Models
 
 https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth
-  dir=upscale_models
+  dir=models/upscale_models
   out=RealESRGAN_x4plus.pth
 
 # Hunyuan 2.1 Models
 
 https://huggingface.co/tencent/Hunyuan3D-2.1/resolve/main/hunyuan3d-dit-v2-1/model.fp16.ckpt?download=true
-  dir=diffusion_models
+  dir=models/diffusion_models
   out=model.fp16.ckpt
 
 https://huggingface.co/tencent/Hunyuan3D-2.1/resolve/main/hunyuan3d-vae-v2-1/model.fp16.ckpt?download=true
-  dir=vae
+  dir=models/vae
   out=model.fp16.ckpt

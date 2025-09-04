@@ -19,4 +19,4 @@ aria2c \
   --max-connection-per-server=5
 
 # Finish
-touch /root/.download-complete
+touch /app/.download-complete
