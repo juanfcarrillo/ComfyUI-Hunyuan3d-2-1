@@ -477,6 +477,9 @@ class Hy3DMultiViewsGenerator:
         unwrap_mesh,
         seed,
     ):
+        device = mm.get_torch_device()
+        offload_device = mm.unet_offload_device()
+
         seed = seed % (2**32)
 
         conf = Hunyuan3DPaintConfig(
@@ -487,6 +490,7 @@ class Hy3DMultiViewsGenerator:
             camera_config["ortho_scale"],
             texture_size,
         )
+
         paint_pipeline = Hunyuan3DPaintPipeline(conf)
 
         image = tensor2pil(image)
@@ -725,6 +729,10 @@ class Hy3D21VAELoader:
         model_path = folder_paths.get_full_path("vae", model_name)
 
         vae_sd = load_torch_file(model_path)
+        
+        # Ensure vae_sd is a dictionary, not a tuple
+        if isinstance(vae_sd, tuple):
+            vae_sd = vae_sd[0]
 
         if vae_config is None:
             vae_config = {
