@@ -1,0 +1,156 @@
+# Git and version control
+.git
+.gitignore
+.gitattributes
+.gitmodules
+
+# Documentation
+README.md
+*.md
+docs/
+CHANGELOG.md
+LICENSE
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.egg-info
+dist
+build
+eggs
+.eggs
+parts
+bin
+var
+sdist
+develop-eggs
+.installed.cfg
+lib
+lib64
+venv*/
+pyvenv*/
+pip-wheel-metadata/
+hunyuan_env/
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.tox/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# ComfyUI specific
+models/
+input/
+output/
+temp/
+user/
+custom_nodes/*/models/
+custom_nodes/*/checkpoints/
+web/extensions/
+*.log
+*.tmp
+
+# Large files that shouldn't be in Docker context
+*.ckpt
+*.safetensors
+*.bin
+*.pth
+*.pt
+*.weights
+*.h5
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+
+# Node modules (if any)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Log files
+logs/
+*.log
+
+# Cache directories
+.cache/
+.npm/
+.yarn/
