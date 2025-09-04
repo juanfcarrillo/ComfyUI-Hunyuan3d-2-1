@@ -637,7 +637,9 @@ class Hy3DInPaint:
         output_mesh_path = os.path.join(temp_folder_path, f"{output_mesh_name}.obj")
         output_temp_path = pipeline.save_mesh(output_mesh_path)
 
-        output_glb_path = os.path.join(comfy_path, "output", f"{output_mesh_name}.glb")
+        output_folder_path = os.path.join(comfy_path, "output")
+        os.makedirs(output_folder_path, exist_ok=True)
+        output_glb_path = os.path.join(output_folder_path, f"{output_mesh_name}.glb")
         shutil.copyfile(output_temp_path, output_glb_path)
 
         trimesh = Trimesh.load(output_glb_path, force="mesh")
@@ -728,6 +730,10 @@ class Hy3D21VAELoader:
         model_path = folder_paths.get_full_path("vae", model_name)
 
         vae_sd = load_torch_file(model_path)
+        
+        # Ensure vae_sd is a dictionary, not a tuple
+        if isinstance(vae_sd, tuple):
+            vae_sd = vae_sd[0]
 
         if vae_config is None:
             vae_config = {
