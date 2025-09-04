@@ -90,66 +90,11 @@ RUN pip install --no-cache-dir \
     realesrgan \
     basicsr \
     facexlib \
-    gfpgan \
-    torchvision
+    gfpgan
 
-# Clone ComfyUI
-RUN git clone https://github.com/comfyanonymous/ComfyUI.git /app/ComfyUI
-
-# Install ComfyUI's requirements.txt
-RUN pip install --no-cache-dir -r /app/ComfyUI/requirements.txt
-
-# Pre-install ComfyUI-Manager  
-RUN cd /app/ComfyUI/custom_nodes && \
-    git clone --depth=1 --no-tags --recurse-submodules --shallow-submodules \
-    https://github.com/ltdrdata/ComfyUI-Manager.git
-
-# Install ComfyUI-Manager requirements
-RUN pip install --no-cache-dir -r /app/ComfyUI/custom_nodes/ComfyUI-Manager/requirements.txt
-
-# Copy runner scripts
-COPY runner-scripts/ /runner-scripts/
-RUN chmod +x /runner-scripts/*.sh
-
-# Create directories for models and outputs
-RUN mkdir -p /app/ComfyUI/models/checkpoints \
-    && mkdir -p /app/ComfyUI/models/vae \
-    && mkdir -p /app/ComfyUI/models/clip \
-    && mkdir -p /app/ComfyUI/models/unet \
-    && mkdir -p /app/ComfyUI/models/diffusion_models \
-    && mkdir -p /app/ComfyUI/models/upscale_models \
-    && mkdir -p /app/ComfyUI/output \
-    && mkdir -p /app/ComfyUI/input \
-    && mkdir -p /app/ComfyUI/custom_nodes
-
-# Create PyTorch compatibility patch for weights_only issue
-RUN echo "import torch\nimport sys\nimport os\n\n# Monkey patch torch.load to handle weights_only compatibility\noriginal_load = torch.load\n\ndef patched_load(*args, **kwargs):\n    if 'weights_only' not in kwargs:\n        kwargs['weights_only'] = False\n    try:\n        return original_load(*args, **kwargs)\n    except Exception as e:\n        if 'weights_only' in str(e) and kwargs.get('weights_only', False):\n            kwargs['weights_only'] = False\n            return original_load(*args, **kwargs)\n        raise e\n\ntorch.load = patched_load\nprint('PyTorch load compatibility patch applied')" > /app/pytorch_patch.py
-
-# Patch ComfyUI's load_torch_file function directly
-RUN sed -i 's/weights_only=True/weights_only=False/g' /app/ComfyUI/comfy/utils.py
-
-# Apply the patch to ComfyUI
-RUN echo "import sys\nsys.path.insert(0, '/app')\nimport pytorch_patch" > /app/ComfyUI/pytorch_patch_init.py
-
-# Copy the handler script for Runpod
-COPY src/handler.py /app/handler.py
-
-# Set proper permissions
-RUN chmod +x /app/handler.py
-
-# Setup volume mount point and working directory
-VOLUME /root
-WORKDIR /root
-
-# Expose the ComfyUI web interface port
-EXPOSE 8188
-
-# Set environment variable for CLI args
-ENV CLI_ARGS=""
-
-# Health check to ensure ComfyUI is responsive
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8188/ || exit 1
+# Copy project
+COPY . .
+RUN chmod +x /app/runner-scripts/*.sh
 
 # Use the enhanced entrypoint
-CMD ["bash", "/runner-scripts/entrypoint.sh"]
+CMD ["bash", "/app/runner-scripts/entrypoint.sh"]
