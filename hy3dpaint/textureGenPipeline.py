@@ -298,9 +298,9 @@ class Hunyuan3DPaintPipeline:
     def save_mesh(self, output_mesh_path):
         self.render.save_mesh(output_mesh_path, downsample=False)
         output_glb_path = output_mesh_path.replace(".obj", ".glb")
-        # conversion_success = quick_convert_with_obj2gltf(
-        #     output_mesh_path, output_glb_path
-        # )
+        quick_convert_with_obj2gltf(
+            output_mesh_path, output_glb_path
+        )
 
         return output_glb_path
 
