@@ -26,3 +26,5 @@ lib
 models
 /output
 *.glb
+/temp
+*.png
