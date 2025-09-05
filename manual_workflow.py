@@ -38,8 +38,6 @@ EnhancedHunyuan3DWorkflow (RECOMMENDED):
 - PLUS full camera configuration control
 - PLUS advanced memory management
 - PLUS customizable texture parameters
-- PLUS automatic background removal using rembg
-- PLUS high-quality texture upscaling using 4x_foolhardy_Remacri
 - Best for 16GB VRAM systems
 - Output: Base mesh + decimated mesh + final textured mesh in output/3D/
 
@@ -61,14 +59,7 @@ OPTIMIZATIONS FOR 16GB VRAM:
 - Reduced steps and guidance_scale
 - Enabled flash_vdm and force_offload
 - Added mesh decimation to reduce face count
-- **Added automatic background removal using rembg**
-- **Added high-quality texture upscaling using 4x_foolhardy_Remacri**
-
-BACKGROUND REMOVAL:
-- Automatically removes background from input images using rembg
-- Uses INSPYRENET model (located in models/RMBG/INSPYRENET/)
-- Reduces artifacts caused by backgrounds in 3D generation
-- Can be disabled by setting remove_background=False
+- Disabled texture upscaling by default
 
 USAGE EXAMPLES:
 # Basic mesh generation
@@ -86,14 +77,7 @@ REQUIREMENTS:
 - Virtual environment should be activated before running
 """
 
-# Import rembg for background removal
-from rembg import remove, new_session
 import torch
-import torch.nn as nn
-import torchvision.transforms as transforms
-from safetensors import safe_open
-import numpy as np
-
 import gc
 import logging
 from PIL import Image
@@ -136,173 +120,6 @@ def cleanup_memory():
     gc.collect()
 
 
-class INSPYRENETBackgroundRemover:
-    """Custom INSPYRENET background removal using PyTorch safetensors model"""
-    
-    def __init__(self, model_path=None):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = None
-        self.model_path = model_path or os.path.join(os.path.dirname(__file__), "models", "RMBG", "INSPYRENET", "inspyrenet.safetensors")
-        
-        # Image preprocessing transforms
-        self.transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
-        
-        self._load_model()
-    
-    def _load_model(self):
-        """Load INSPYRENET model from safetensors file"""
-        if not os.path.exists(self.model_path):
-            raise FileNotFoundError(f"INSPYRENET model not found at {self.model_path}")
-        
-        print(f"   Loading INSPYRENET model from {self.model_path}")
-        
-        try:
-            # Load state dict from safetensors
-            state_dict = {}
-            with safe_open(self.model_path, framework="pt", device="cpu") as f:
-                for key in f.keys():
-                    state_dict[key] = f.get_tensor(key)
-            
-            # Create model
-            self.model = self._create_inspyrenet_model()
-            
-            # Try to load state dict (may not match exactly due to architecture differences)
-            try:
-                self.model.load_state_dict(state_dict, strict=False)
-                print("   INSPYRENET model state dict loaded successfully")
-            except Exception as e:
-                print(f"   Warning: Could not load state dict: {e}")
-                print("   Using randomly initialized model")
-            
-            self.model.to(self.device)
-            self.model.eval()
-            
-        except Exception as e:
-            print(f"   Error loading INSPYRENET model: {e}")
-            raise
-    
-    def _create_inspyrenet_model(self):
-        """Create INSPYRENET model architecture - improved version"""
-        # INSPYRENET is based on a MobileNetV2-like architecture
-        # Let's use a simpler but more effective approach
-        class INSPYRENET(nn.Module):
-            def __init__(self):
-                super(INSPYRENET, self).__init__()
-                # Encoder with depthwise separable convolutions
-                self.encoder = nn.Sequential(
-                    # Initial convolution
-                    nn.Conv2d(3, 32, 3, padding=1),
-                    nn.BatchNorm2d(32),
-                    nn.ReLU6(inplace=True),
-                    
-                    # Depthwise separable conv blocks
-                    self._make_ds_block(32, 64),
-                    self._make_ds_block(64, 128, stride=2),
-                    self._make_ds_block(128, 128),
-                    self._make_ds_block(128, 256, stride=2),
-                    self._make_ds_block(256, 256),
-                    self._make_ds_block(256, 512, stride=2),
-                    
-                    # Multiple 512 channels
-                    self._make_ds_block(512, 512),
-                    self._make_ds_block(512, 512),
-                    self._make_ds_block(512, 512),
-                    self._make_ds_block(512, 512),
-                    self._make_ds_block(512, 512),
-                    
-                    # Decoder
-                    nn.ConvTranspose2d(512, 256, 2, stride=2),
-                    nn.BatchNorm2d(256),
-                    nn.ReLU6(inplace=True),
-                    nn.ConvTranspose2d(256, 128, 2, stride=2),
-                    nn.BatchNorm2d(128),
-                    nn.ReLU6(inplace=True),
-                    nn.ConvTranspose2d(128, 64, 2, stride=2),
-                    nn.BatchNorm2d(64),
-                    nn.ReLU6(inplace=True),
-                    nn.ConvTranspose2d(64, 32, 2, stride=2),
-                    nn.BatchNorm2d(32),
-                    nn.ReLU6(inplace=True),
-                    nn.Conv2d(32, 1, 1),
-                    nn.Sigmoid()
-                )
-            
-            def _make_ds_block(self, in_channels, out_channels, stride=1):
-                """Depthwise separable convolution block"""
-                return nn.Sequential(
-                    # Depthwise
-                    nn.Conv2d(in_channels, in_channels, 3, stride=stride, padding=1, groups=in_channels),
-                    nn.BatchNorm2d(in_channels),
-                    nn.ReLU6(inplace=True),
-                    # Pointwise
-                    nn.Conv2d(in_channels, out_channels, 1),
-                    nn.BatchNorm2d(out_channels),
-                    nn.ReLU6(inplace=True)
-                )
-            
-            def forward(self, x):
-                return self.encoder(x)
-        
-        return INSPYRENET()
-    
-    def __call__(self, image):
-        """Remove background from PIL image with fallback"""
-        if self.model is None:
-            print("   INSPYRENET model not available, using rembg fallback")
-            return self._rembg_fallback(image)
-            
-        if isinstance(image, str):
-            image = Image.open(image).convert("RGB")
-        
-        # Preprocess image
-        original_size = image.size
-        
-        # Convert PIL to tensor manually
-        image_array = np.array(image).astype(np.float32) / 255.0
-        image_tensor = torch.from_numpy(image_array).permute(2, 0, 1)
-        image_tensor = image_tensor.unsqueeze(0).to(self.device)
-        
-        try:
-            with torch.no_grad():
-                # Get segmentation mask
-                mask = self.model(image_tensor)
-                
-                # Resize mask to original image size
-                mask = torch.nn.functional.interpolate(mask, size=original_size[::-1], mode='bilinear', align_corners=False)
-                mask = mask.squeeze().cpu().numpy()
-                
-                # Apply threshold to create binary mask
-                mask = (mask > 0.5).astype(np.uint8) * 255
-                
-                # Check if mask is valid (not all zeros or all ones)
-                unique_values = np.unique(mask)
-                if len(unique_values) <= 1:
-                    print("   Warning: INSPYRENET produced invalid mask, using rembg fallback")
-                    return self._rembg_fallback(image)
-                
-                # Convert to PIL Image
-                mask_pil = Image.fromarray(mask, mode='L')
-                
-                # Apply mask to original image
-                bg_removed = Image.new("RGBA", original_size, (0, 0, 0, 0))
-                bg_removed.paste(image, mask=mask_pil)
-                
-                return bg_removed
-                
-        except Exception as e:
-            print(f"   Error during INSPYRENET inference: {e}")
-            print("   Using rembg fallback")
-            return self._rembg_fallback(image)
-    
-    def _rembg_fallback(self, image):
-        """Fallback to rembg u2net model"""
-        from rembg import remove, new_session
-        session = new_session("u2net")
-        return remove(image, session=session)
-
 class ManualHunyuan3DWorkflow:
     def __init__(self):
         # Initialize the node instances
@@ -321,54 +138,6 @@ class ManualHunyuan3DWorkflow:
             image = Image.open(image_path).convert("RGB")
         else:
             image = image_path
-
-        # Convert PIL to tensor format (add batch dimension)
-        image_tensor = pil2tensor(image)
-        return image_tensor
-
-    def remove_background(self, image, model_name="rembg"):
-        """Remove background from image using rembg or custom INSPYRENET"""
-        print(f"   Removing background using {model_name} model...")
-        
-        if model_name == "inspyrenet":
-            # Use custom INSPYRENET implementation
-            try:
-                if not hasattr(self, 'inspyrenet_remover'):
-                    self.inspyrenet_remover = INSPYRENETBackgroundRemover()
-                bg_removed = self.inspyrenet_remover(image)
-                print("   INSPYRENET background removal completed")
-                return bg_removed
-            except Exception as e:
-                print(f"   Error with INSPYRENET: {e}")
-                print("   Falling back to u2net model")
-                model_name = "u2net"
-        
-        # Fallback to rembg
-        if model_name == "rembg":
-            session = new_session()  # Use default model
-        else:
-            session = new_session(model_name)
-        
-        # Remove background
-        if isinstance(image, str):
-            # Load image from path
-            image = Image.open(image).convert("RGB")
-        
-        # Remove background
-        bg_removed = remove(image, session=session)
-        
-        print("   Background removal completed")
-        return bg_removed
-
-    def load_image_with_bg_removal(self, image_path, remove_bg=True, bg_model="inspyrenet"):
-        """Load image with optional background removal"""
-        if isinstance(image_path, str):
-            image = Image.open(image_path).convert("RGB")
-        else:
-            image = image_path
-
-        if remove_bg:
-            image = self.remove_background(image, bg_model)
 
         # Convert PIL to tensor format (add batch dimension)
         image_tensor = pil2tensor(image)
@@ -427,9 +196,6 @@ class ManualHunyuan3DWorkflow:
         reduce_faces=True,
         max_facenum=25000,  # Reduced from 40000 for 16GB VRAM
         smooth_normals=False,
-        # Background removal parameters
-        remove_background=True,
-        bg_model="inspyrenet",
         # Export parameters
         file_format="glb",
         save_file=True,
@@ -445,14 +211,8 @@ class ManualHunyuan3DWorkflow:
 
         # Step 2: Load and prepare input image
         print("2. Loading input image...")
-        image_tensor = self.load_image_with_bg_removal(
-            input_image_path, 
-            remove_bg=remove_background, 
-            bg_model=bg_model
-        )
+        image_tensor = self.load_image(input_image_path)
         print(f"   Image loaded from: {input_image_path}")
-        if remove_background:
-            print("   Background removed using rembg")
         print(f"   Image shape: {image_tensor.shape}")
 
         # Step 3: Generate mesh latents
@@ -577,54 +337,6 @@ class ManualHunyuan3DTextureWorkflow:
         image_tensor = pil2tensor(image)
         return image_tensor
 
-    def remove_background(self, image, model_name="rembg"):
-        """Remove background from image using rembg or custom INSPYRENET"""
-        print(f"   Removing background using {model_name} model...")
-        
-        if model_name == "inspyrenet":
-            # Use custom INSPYRENET implementation
-            try:
-                if not hasattr(self, 'inspyrenet_remover'):
-                    self.inspyrenet_remover = INSPYRENETBackgroundRemover()
-                bg_removed = self.inspyrenet_remover(image)
-                print("   INSPYRENET background removal completed")
-                return bg_removed
-            except Exception as e:
-                print(f"   Error with INSPYRENET: {e}")
-                print("   Falling back to u2net model")
-                model_name = "u2net"
-        
-        # Fallback to rembg
-        if model_name == "rembg":
-            session = new_session()  # Use default model
-        else:
-            session = new_session(model_name)
-        
-        # Remove background
-        if isinstance(image, str):
-            # Load image from path
-            image = Image.open(image).convert("RGB")
-        
-        # Remove background
-        bg_removed = remove(image, session=session)
-        
-        print("   Background removal completed")
-        return bg_removed
-
-    def load_image_with_bg_removal(self, image_path, remove_bg=True, bg_model="inspyrenet"):
-        """Load image with optional background removal"""
-        if isinstance(image_path, str):
-            image = Image.open(image_path).convert("RGB")
-        else:
-            image = image_path
-
-        if remove_bg:
-            image = self.remove_background(image, bg_model)
-
-        # Convert PIL to tensor format (add batch dimension)
-        image_tensor = pil2tensor(image)
-        return image_tensor
-
     def run_texture_workflow(
         self,
         input_trimesh,
@@ -655,9 +367,6 @@ class ManualHunyuan3DTextureWorkflow:
         upscale_model_name="RealESRGAN_x4plus.pth",
         upscale_albedo=True,
         upscale_mr=True,
-        # Background removal parameters
-        remove_background=True,
-        bg_model="inspyrenet",
         # Export parameters
         file_format="glb",
         save_file=True,
@@ -684,14 +393,8 @@ class ManualHunyuan3DTextureWorkflow:
 
         # Step 3: Load input image
         print("3. Loading input image...")
-        image_tensor = self.load_image_with_bg_removal(
-            input_image_path, 
-            remove_bg=remove_background, 
-            bg_model=bg_model
-        )
+        image_tensor = self.load_image(input_image_path)
         print(f"   Image loaded from: {input_image_path}")
-        if remove_background:
-            print("   Background removed using rembg")
         print(f"   Image shape: {image_tensor.shape}")
 
         # Step 4: Generate multi-views
@@ -872,8 +575,7 @@ class CompleteHunyuan3DWorkflow:
                 "guidance_scale": 4.0,  # Reduced from 5.6
                 "texture_size": 2048,  # Reduced from 4096
                 "upscale_albedo": True,  # Enable upscaling for quality
-                "upscale_mr": True,  # Enable upscaling for quality
-                "upscale_model_name": "4x_foolhardy_Remacri.pth",  # Use high-quality upscaling model
+                "upscale_mr": True,
                 "camera_azimuths": "0, 180, 90, 270, 45, 315",  # 6 views for better coverage
                 "camera_elevations": "0, 0, 0, 0, 30, 30",
                 "view_weights": "1.0, 1.0, 1.0, 1.0, 0.8, 0.8",
@@ -886,9 +588,6 @@ class CompleteHunyuan3DWorkflow:
                 # InPaint parameters
                 "vertex_inpaint": True,
                 "method": "NS",
-                # Background removal parameters
-                "remove_background": True,
-                "bg_model": "inspyrenet",
             }
 
         # Step 1: Generate mesh
@@ -994,9 +693,8 @@ class EnhancedHunyuan3DWorkflow:
                 "steps": 15,  # Further reduced
                 "guidance_scale": 3.5,  # Further reduced
                 "texture_size": 1024,  # Further reduced for 16GB VRAM
-                "upscale_albedo": True,  # Enable upscaling for quality
-                "upscale_mr": True,  # Enable upscaling for quality
-                "upscale_model_name": "4x_foolhardy_Remacri.pth",  # Use high-quality upscaling model
+                "upscale_albedo": False,  # Disable upscaling to save memory
+                "upscale_mr": False,  # Disable upscaling to save memory
                 # Camera configuration options
                 "camera_azimuths": "0, 180, 90, 270, 45, 315",  # 6 views for better coverage
                 "camera_elevations": "0, 0, 0, 0, 30, 30",
@@ -1010,9 +708,6 @@ class EnhancedHunyuan3DWorkflow:
                 # InPaint parameters
                 "vertex_inpaint": True,
                 "method": "NS",
-                # Background removal parameters
-                "remove_background": True,
-                "bg_model": "inspyrenet",
             }
 
         # Step 1: Generate base mesh
@@ -1155,9 +850,6 @@ def main():
                 "force_offload": True,
                 "file_format": "glb",
                 "save_file": True,
-                # Background removal parameters
-                "remove_background": True,
-                "bg_model": "inspyrenet",
             }
             results = workflow.run_workflow(**config)
 
@@ -1200,16 +892,12 @@ def main():
                 "steps": 15,
                 "guidance_scale": 3.5,
                 "texture_size": 1024,
-                "upscale_albedo": True,  # Enable upscaling
-                "upscale_mr": True,  # Enable upscaling
-                "upscale_model_name": "4x_foolhardy_Remacri.pth",  # Use high-quality model
+                "upscale_albedo": False,
+                "upscale_mr": False,
                 "camera_azimuths": "0, 180, 90, 270, 45, 315",
                 "camera_elevations": "0, 0, 0, 0, 30, 30",
                 "view_weights": "1.0, 1.0, 1.0, 1.0, 0.8, 0.8",
                 "ortho_scale": 1.10,
-                # Background removal parameters
-                "remove_background": True,
-                "bg_model": "inspyrenet",
             }
             # 32+ GB VRAM
             # texture_params = {
