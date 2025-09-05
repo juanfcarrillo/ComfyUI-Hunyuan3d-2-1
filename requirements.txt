@@ -83,3 +83,6 @@ realesrgan
 basicsr
 facexlib
 gfpgan
+
+rembg
+onnxruntime
