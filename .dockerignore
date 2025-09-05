@@ -154,3 +154,9 @@ logs/
 .cache/
 .npm/
 .yarn/
+
+# Cog specific
+hunyuan_env/
+output/
+3D/
+workflow_examples/
