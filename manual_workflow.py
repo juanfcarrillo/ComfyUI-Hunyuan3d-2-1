@@ -9,7 +9,47 @@ WORKFLOWS AVAILABLE:
 1. ManualHunyuan3DWorkflow - Mesh generation only
 2. ManualHunyuan3DTextureWorkflow - Texture generation for existing meshes
 3. CompleteHunyuan3DWorkflow - Full pipeline (mesh + texture)
-4. EnhancedHunyuan3DWorkflow - Optimized pipeline with mesh decimation (RECOMMENDED)
+4. EnhancedHunyuan3DWorkflow - **RECOMMENDED** (mesh + texture + decimation + full camera control)
+
+WORKFLOW COMPARISON:
+==================
+
+ManualHunyuan3DWorkflow:
+- Generates 3D mesh from 2D image
+- Optimized for 16GB VRAM
+- Fastest option
+- Output: Single GLB file in output/3D/
+
+ManualHunyuan3DTextureWorkflow:
+- Applies textures to existing 3D mesh
+- Requires pre-existing mesh
+- Full camera configuration control
+- Output: Textured GLB file in output/3D/
+
+CompleteHunyuan3DWorkflow:
+- Combines mesh generation + texture generation
+- Uses default camera settings (6 views)
+- Moderate memory usage
+- Output: Base mesh + textured mesh in output/3D/
+
+EnhancedHunyuan3DWorkflow (RECOMMENDED):
+- All features of Complete workflow
+- PLUS automatic mesh decimation for optimal performance
+- PLUS full camera configuration control
+- PLUS advanced memory management
+- PLUS customizable texture parameters
+- Best for 16GB VRAM systems
+- Output: Base mesh + decimated mesh + final textured mesh in output/3D/
+
+CAMERA CONFIGURATION OPTIONS (Enhanced Workflow):
+- camera_azimuths: Camera angles around object (comma-separated)
+- camera_elevations: Camera height angles (comma-separated)
+- view_weights: Importance weights for each view (comma-separated)
+- ortho_scale: Orthographic camera scale
+- view_size: Render resolution per view (affects quality vs speed)
+- texture_size: Final texture resolution
+- steps: Diffusion steps for texture generation
+- guidance_scale: How closely to follow the input image
 
 OPTIMIZATIONS FOR 16GB VRAM:
 - Reduced view_size from 1024 to 512
@@ -70,46 +110,6 @@ from nodes import (
 
 from realesrgan import RealESRGANer
 from basicsr.archs.rrdbnet_arch import RRDBNet
-
-
-def check_vram_and_adjust_params(base_params, target_vram_gb=16):
-    """Check available VRAM and adjust parameters accordingly"""
-    if not torch.cuda.is_available():
-        print("   CUDA not available, using CPU mode")
-        return base_params
-
-    try:
-        # Get GPU memory info
-        gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)  # GB
-        print(f"   Detected GPU memory: {gpu_memory:.1f} GB")
-
-        if gpu_memory < target_vram_gb:
-            print(f"   GPU memory ({gpu_memory:.1f} GB) is less than target ({target_vram_gb} GB)")
-            print("   Adjusting parameters for lower VRAM usage...")
-
-            # Adjust parameters for lower VRAM
-            adjusted_params = base_params.copy()
-            if 'octree_resolution' in adjusted_params:
-                adjusted_params['octree_resolution'] = min(adjusted_params['octree_resolution'], 192)
-            if 'num_chunks' in adjusted_params:
-                adjusted_params['num_chunks'] = min(adjusted_params['num_chunks'], 2000)
-            if 'max_facenum' in adjusted_params:
-                adjusted_params['max_facenum'] = min(adjusted_params['max_facenum'], 12000)
-            if 'view_size' in adjusted_params:
-                adjusted_params['view_size'] = min(adjusted_params['view_size'], 384)
-            if 'texture_size' in adjusted_params:
-                adjusted_params['texture_size'] = min(adjusted_params['texture_size'], 1024)
-            if 'steps' in adjusted_params:
-                adjusted_params['steps'] = min(adjusted_params['steps'], 20)
-
-            return adjusted_params
-        else:
-            print(f"   GPU memory sufficient ({gpu_memory:.1f} GB >= {target_vram_gb} GB)")
-            return base_params
-
-    except Exception as e:
-        print(f"   Could not check GPU memory: {e}")
-        return base_params
 
 
 def cleanup_memory():
@@ -269,11 +269,16 @@ class ManualHunyuan3DWorkflow:
         )
 
         # Optional: Decimate mesh for better texture generation performance
-        if num_faces_after > 20000:  # Only decimate if mesh is very dense
-            print("7. Decimating mesh for optimal texture generation...")
+        # Use 80% of max_facenum as target if mesh is overly complex
+        decimation_threshold = max_facenum * 1.2  # Decimate if faces exceed 120% of max_facenum
+        target_faces = int(max_facenum * 0.8)  # Target 80% of max_facenum
+        
+        if num_faces_after > decimation_threshold:
+            print(f"7. Decimating mesh for optimal texture generation...")
+            print(f"   Target: {target_faces} faces (80% of max_facenum: {max_facenum})")
             processed_trimesh = self.decimate_mesh(
                 processed_trimesh,
-                target_faces=15000,
+                target_faces=target_faces,
                 method="simple"
             )
             num_faces_after = self.get_number_of_faces(processed_trimesh)
@@ -395,7 +400,7 @@ class ManualHunyuan3DTextureWorkflow:
         # Step 4: Generate multi-views
         print("4. Generating multi-view textures...")
         cleanup_memory()  # Clean memory before multi-view generation
-        multiview_results = self.multiviews_generator.genmultiviews(
+        multiviews_generator = self.multiviews_generator.genmultiviews(
             trimesh=uv_wrapped_mesh,
             camera_config=camera_config,
             view_size=view_size,
@@ -408,12 +413,12 @@ class ManualHunyuan3DTextureWorkflow:
         )
 
         # Unpack the correct return values from MultiViewsGenerator (6 values)
-        pipeline = multiview_results[0]
-        albedo = multiview_results[1]  # albedo images
-        mr = multiview_results[2]      # mr images
-        positions = multiview_results[3]  # position maps
-        normals = multiview_results[4]    # normal maps
-        camera_config_out = multiview_results[5]  # camera config
+        pipeline = multiviews_generator[0]
+        albedo = multiviews_generator[1]  # albedo images
+        mr = multiviews_generator[2]      # mr images
+        positions = multiviews_generator[3]  # position maps
+        normals = multiviews_generator[4]    # normal maps
+        camera_config_out = multiviews_generator[5]  # camera config
         # Note: metadata is not returned by this version of the node
 
         print("   Multi-view generation completed")
@@ -483,7 +488,9 @@ class ManualHunyuan3DTextureWorkflow:
         )
 
         inpainted_albedo = inpaint_results[0]
-        output_glb_path = inpaint_results[1]
+        inpainted_mr = inpaint_results[1]
+        textured_trimesh = inpaint_results[2]  # The actual textured mesh!
+        output_glb_path = inpaint_results[3]  # The correct path
 
         print("   Texture inpainting completed")
         cleanup_memory()  # Clean up after inpainting
@@ -492,7 +499,7 @@ class ManualHunyuan3DTextureWorkflow:
         print("10. Exporting final textured mesh...")
         cleanup_memory()  # Clean memory before export
         final_output_path = self.export_mesh.process(
-            trimesh=uv_wrapped_mesh,  # Use the UV-wrapped mesh
+            trimesh=textured_trimesh,  # Use the textured mesh from inpaint!
             filename_prefix=f"3D/{output_mesh_name}_final",
             file_format=file_format,
             save_file=save_file,
@@ -503,6 +510,7 @@ class ManualHunyuan3DTextureWorkflow:
         # Return results
         results = {
             "uv_wrapped_mesh": uv_wrapped_mesh,
+            "textured_mesh": textured_trimesh,  # The actual textured mesh
             "camera_config": camera_config,
             "multiview_images": albedo,  # Use albedo images as multiview images
             "baked_albedo": baked_albedo,
@@ -512,6 +520,7 @@ class ManualHunyuan3DTextureWorkflow:
             "final_albedo": final_albedo,
             "final_mr": final_mr,
             "inpainted_albedo": inpainted_albedo,
+            "inpainted_mr": inpainted_mr,
             "output_glb_path": output_glb_path,
             "final_output_path": final_output_path,
             "output_mesh_name": output_mesh_name,
@@ -570,6 +579,15 @@ class CompleteHunyuan3DWorkflow:
                 "camera_azimuths": "0, 180, 90, 270, 45, 315",  # 6 views for better coverage
                 "camera_elevations": "0, 0, 0, 0, 30, 30",
                 "view_weights": "1.0, 1.0, 1.0, 1.0, 0.8, 0.8",
+                "ortho_scale": 1.10,
+                "normal_texture": True,
+                "unwrap_mesh": True,
+                "save_after_generate": False,
+                "correct_after_generate": "randomize",
+                "seed": 200434251488993,
+                # InPaint parameters
+                "vertex_inpaint": True,
+                "method": "NS",
             }
 
         # Step 1: Generate mesh
@@ -639,7 +657,7 @@ class EnhancedHunyuan3DWorkflow:
         # Texture generation parameters (optimized for 16GB VRAM)
         texture_params=None,
         # Mesh decimation parameters
-        enable_decimation=True,
+        enable_decimation=False,
         target_face_count=15000,  # Further reduce for 16GB VRAM
         preserve_boundary=True,
         boundary_weight=1.0,
@@ -654,12 +672,20 @@ class EnhancedHunyuan3DWorkflow:
                 "steps": 25,  # Further reduced
                 "guidance_scale": 3.5,  # Further reduced
                 "seed": 42,
-                "max_facenum": 20000,  # Reduced
+                "max_facenum": 400000,  # Reduced
                 "octree_resolution": 224,  # Further reduced
                 "num_chunks": 3000,  # Further reduced
                 "enable_flash_vdm": True,
                 "force_offload": True,
             }
+            # 32+ GB VRAM
+            # mesh_params = {
+            #     "steps": 50,
+            #     "guidance_scale": 5.0,
+            #     "octree_resolution": 384,
+            #     "num_chunks": 8000,
+            #     "max_facenum": 500000,    # Higher face count
+            # }
 
         if texture_params is None:
             texture_params = {
@@ -669,6 +695,19 @@ class EnhancedHunyuan3DWorkflow:
                 "texture_size": 1024,  # Further reduced for 16GB VRAM
                 "upscale_albedo": False,  # Disable upscaling to save memory
                 "upscale_mr": False,  # Disable upscaling to save memory
+                # Camera configuration options
+                "camera_azimuths": "0, 180, 90, 270, 45, 315",  # 6 views for better coverage
+                "camera_elevations": "0, 0, 0, 0, 30, 30",
+                "view_weights": "1.0, 1.0, 1.0, 1.0, 0.8, 0.8",
+                "ortho_scale": 1.10,
+                "normal_texture": True,
+                "unwrap_mesh": True,
+                "save_after_generate": False,
+                "correct_after_generate": "randomize",
+                "seed": 200434251488993,
+                # InPaint parameters
+                "vertex_inpaint": True,
+                "method": "NS",
             }
 
         # Step 1: Generate base mesh
@@ -692,12 +731,20 @@ class EnhancedHunyuan3DWorkflow:
             print("PHASE 1.5: MESH DECIMATION")
             print("=" * 60)
 
-            print(f"   Decimating mesh from {mesh_results['num_faces_after']} to ~{target_face_count} faces...")
+            # Use 80% of max_facenum from mesh_params if available, otherwise use target_face_count
+            if mesh_params and "max_facenum" in mesh_params:
+                dynamic_target = int(mesh_params["max_facenum"] * 0.8)
+                print(f"   Using dynamic target: {dynamic_target} faces (80% of max_facenum: {mesh_params['max_facenum']})")
+            else:
+                dynamic_target = target_face_count
+                print(f"   Using fixed target: {dynamic_target} faces")
+
+            print(f"   Decimating mesh from {mesh_results['num_faces_after']} to ~{dynamic_target} faces...")
 
             decimated_mesh = self.mesh_decimator.decimate(
                 trimesh=processed_mesh,
                 subdivideParts=8,  # Use 8 CPU cores
-                target_face_num=target_face_count,
+                target_face_num=dynamic_target,
             )[0]
 
             final_mesh_for_texture = decimated_mesh
@@ -838,11 +885,36 @@ def main():
         elif args.workflow == "enhanced":
             # Run enhanced workflow (recommended for 16GB VRAM)
             workflow = EnhancedHunyuan3DWorkflow()
+
+            # Default texture parameters with camera configurations
+            default_texture_params = {
+                "view_size": 512,
+                "steps": 15,
+                "guidance_scale": 3.5,
+                "texture_size": 1024,
+                "upscale_albedo": False,
+                "upscale_mr": False,
+                "camera_azimuths": "0, 180, 90, 270, 45, 315",
+                "camera_elevations": "0, 0, 0, 0, 30, 30",
+                "view_weights": "1.0, 1.0, 1.0, 1.0, 0.8, 0.8",
+                "ortho_scale": 1.10,
+            }
+            # 32+ GB VRAM
+            # texture_params = {
+            #     "view_size": 1024,
+            #     "texture_size": 4096,     # Maximum texture resolution
+            #     "steps": 35,             # Maximum quality
+            #     "guidance_scale": 5.6,   # Maximum adherence
+            #     "upscale_albedo": True,
+            #     "upscale_mr": True,
+            # }
+
             results = workflow.run_enhanced_workflow(
                 vae_model_name=args.vae_model,
                 diffusion_model_name=args.diffusion_model,
                 input_image_path=args.input_image,
                 output_mesh_name=args.output_name,
+                texture_params=default_texture_params,  # Pass texture params with camera configs
             )
             print("\nEnhanced workflow finished!")
             print(f"Final textured mesh: {results['final_mesh_path']}")
