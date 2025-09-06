@@ -1,9 +1,8 @@
 #!/bin/bash
 
 # Compile custom rasterizer
-cd hy3dpaint/custom_rasterizer
-python setup.py install
+pip install wheel/*.whl
 
 # Compile differentiable renderer
-cd ../DifferentiableRenderer
+cd hy3dpaint/DifferentiableRenderer
 python setup.py install
