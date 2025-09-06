@@ -90,7 +90,9 @@ RUN pip install --no-cache-dir \
     realesrgan \
     basicsr \
     facexlib \
-    gfpgan
+    gfpgan \
+    insightface \
+    transparent-background
 
 # Copy project
 COPY . .

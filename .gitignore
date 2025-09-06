@@ -28,3 +28,4 @@ models
 *.glb
 /temp
 *.png
+.github/copilot-instructions.md
