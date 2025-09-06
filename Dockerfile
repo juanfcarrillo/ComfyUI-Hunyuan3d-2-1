@@ -93,7 +93,9 @@ RUN pip install --no-cache-dir \
     gfpgan \
     insightface \
     transparent-background \
-    runpod
+    runpod \
+    boto3 \
+    python-dotenv
 
 # Copy project
 COPY . .

@@ -18,6 +18,10 @@ INPUT FORMAT:
     "vae_model": "model.fp16.ckpt",  # Optional: VAE model filename
     "diffusion_model": "model.fp16.ckpt",  # Optional: Diffusion model filename
 
+    # Upload configuration
+    "upload_to_r2": true,  # Optional: Upload results to R2 storage
+    "keep_local_files": false,  # Optional: Keep local files after upload
+
     # Background removal options
     "remove_background": true,  # Optional: Enable background removal
     "bg_threshold": 0.5,  # Optional: Background removal threshold (0.0-1.0)
@@ -99,6 +103,14 @@ from typing import Dict, Any, Union
 import runpod
 from PIL import Image
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    print("⚠️ python-dotenv not installed. Environment variables will only be loaded from system environment.")
+    pass
+
 # Import the workflow classes
 from manual_workflow import (
     ManualHunyuan3DWorkflow,
@@ -106,6 +118,9 @@ from manual_workflow import (
     EnhancedHunyuan3DWorkflow,
     cleanup_memory,
 )
+
+# Import R2 uploader
+from r2_uploader import upload_3d_model, create_model_uploader
 
 
 class RunPodHunyuan3DHandler:
@@ -128,6 +143,10 @@ class RunPodHunyuan3DHandler:
         self.output_dir = Path("output/3D")
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Initialize R2 uploader if configured
+        self.r2_uploader = None
+        self._check_r2_configuration()
+
         print("✅ RunPod Hunyuan 3D Handler initialized successfully")
 
     def _initialize_workflow(self, workflow_type: str):
@@ -143,6 +162,21 @@ class RunPodHunyuan3DHandler:
         elif workflow_type == "enhanced" and self.enhanced_workflow is None:
             print("🔄 Initializing enhanced workflow...")
             self.enhanced_workflow = EnhancedHunyuan3DWorkflow()
+
+    def _check_r2_configuration(self):
+        """Check if R2 is properly configured"""
+        required_r2_vars = ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET_NAME"]
+        r2_configured = all(os.getenv(var) for var in required_r2_vars)
+        
+        if r2_configured:
+            try:
+                self.r2_uploader = create_model_uploader()
+                print("✅ R2 storage configured and ready")
+            except Exception as e:
+                print(f"⚠️ R2 configuration found but connection failed: {e}")
+                self.r2_uploader = None
+        else:
+            print("ℹ️ R2 storage not configured (missing environment variables)")
 
     def _decode_base64_image(self, base64_data: str) -> Image.Image:
         """Decode base64 image data to PIL Image, or load from file path"""
@@ -215,6 +249,8 @@ class RunPodHunyuan3DHandler:
             "remove_background": job_input.get("remove_background", True),
             "bg_threshold": job_input.get("bg_threshold", 0.5),
             "bg_use_jit": job_input.get("bg_use_jit", False),
+            "upload_to_r2": job_input.get("upload_to_r2", True),
+            "keep_local_files": job_input.get("keep_local_files", False),
         }
 
         # Add workflow-specific parameters
@@ -266,6 +302,70 @@ class RunPodHunyuan3DHandler:
             "target_face_count": 15000,
         }
 
+    def _upload_files_to_r2(self, output_files: list, workflow_type: str, output_name: str) -> list:
+        """Upload output files to R2 and update file info with download URLs"""
+        if not self.r2_uploader:
+            print("ℹ️ R2 upload skipped - not configured")
+            return output_files
+
+        print("☁️ Uploading files to R2 storage...")
+        
+        uploaded_files = []
+        
+        for file_info in output_files:
+            local_path = file_info["full_path"]
+            filename = file_info["filename"]
+            file_type = file_info["file_type"]
+            
+            try:
+                # Create metadata for the upload
+                metadata = {
+                    "workflow_type": workflow_type,
+                    "output_name": output_name,
+                    "file_type": file_type,
+                    "original_filename": filename,
+                }
+                
+                # Upload file
+                download_url = upload_3d_model(
+                    local_file_path=local_path,
+                    model_name=output_name,
+                    workflow_type=workflow_type,
+                    additional_metadata=metadata
+                )
+                
+                # Update file info with download URL
+                updated_file_info = file_info.copy()
+                updated_file_info["download_url"] = download_url
+                updated_file_info["uploaded_to_r2"] = True
+                
+                uploaded_files.append(updated_file_info)
+                print(f"✅ Uploaded {filename} to R2")
+                
+            except Exception as e:
+                print(f"❌ Failed to upload {filename} to R2: {e}")
+                # Keep original file info but mark upload as failed
+                failed_file_info = file_info.copy()
+                failed_file_info["upload_error"] = str(e)
+                failed_file_info["uploaded_to_r2"] = False
+                uploaded_files.append(failed_file_info)
+        
+        return uploaded_files
+
+    def _cleanup_local_files(self, output_files: list):
+        """Clean up local files after successful upload"""
+        print("🧹 Cleaning up local files...")
+        
+        for file_info in output_files:
+            if file_info.get("uploaded_to_r2", False):
+                local_path = file_info["full_path"]
+                try:
+                    if os.path.exists(local_path):
+                        os.remove(local_path)
+                        print(f"🗑️ Removed local file: {os.path.basename(local_path)}")
+                except Exception as e:
+                    print(f"⚠️ Failed to remove local file {local_path}: {e}")
+
     def _run_mesh_workflow_sync(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Run mesh generation workflow synchronously"""
         print("🔵 Starting mesh generation workflow...")
@@ -302,15 +402,27 @@ class RunPodHunyuan3DHandler:
         if os.path.exists(temp_image_path):
             os.remove(temp_image_path)
 
+        output_files = [
+            {
+                "filename": os.path.basename(results["output_path"]),
+                "full_path": results["output_path"],
+                "file_type": "mesh",
+            }
+        ]
+
+        # Upload to R2 if requested
+        if params["upload_to_r2"]:
+            output_files = self._upload_files_to_r2(
+                output_files, "mesh", params["output_name"]
+            )
+            
+            # Clean up local files if requested
+            if not params["keep_local_files"]:
+                self._cleanup_local_files(output_files)
+
         return {
             "workflow_type": "mesh",
-            "output_files": [
-                {
-                    "filename": os.path.basename(results["output_path"]),
-                    "full_path": results["output_path"],
-                    "file_type": "mesh",
-                }
-            ],
+            "output_files": output_files,
             "mesh_stats": {
                 "original_faces": results["num_faces_before"],
                 "processed_faces": results["num_faces_after"],
@@ -388,6 +500,16 @@ class RunPodHunyuan3DHandler:
                 }
             )
 
+        # Upload to R2 if requested
+        if params["upload_to_r2"]:
+            output_files = self._upload_files_to_r2(
+                output_files, "enhanced", params["output_name"]
+            )
+            
+            # Clean up local files if requested
+            if not params["keep_local_files"]:
+                self._cleanup_local_files(output_files)
+
         return {
             "workflow_type": "enhanced",
             "output_files": output_files,
@@ -442,6 +564,7 @@ class RunPodHunyuan3DHandler:
             final_result = {
                 "status": "success",
                 "processing_time": round(processing_time, 2),
+                "r2_configured": self.r2_uploader is not None,
                 **results,
             }
 
@@ -679,6 +802,36 @@ def test_file_input():
         return False
 
 
+# Test function for R2 integration
+def test_r2_integration():
+    """Test R2 integration with the handler"""
+    print("🧪 Testing R2 integration...")
+
+    # Test input with R2 upload enabled
+    test_input = {
+        "workflow": "mesh",
+        "input_image": "assets/mune.png",  # Use file path
+        "output_name": "test_r2_upload",
+        "upload_to_r2": True,
+        "keep_local_files": False,
+        "remove_background": False,
+        "mesh_params": {"steps": 5, "max_facenum": 1000},  # Reduced for testing
+    }
+
+    handler = RunPodHunyuan3DHandler()
+    result = handler.process_job_sync(test_input)
+    
+    print(f"📤 Test result: {json.dumps(result, indent=2)}")
+    
+    # Check if files were uploaded
+    if result.get("status") == "success":
+        for file_info in result.get("output_files", []):
+            if file_info.get("uploaded_to_r2"):
+                print(f"✅ File uploaded to R2: {file_info['download_url']}")
+            else:
+                print(f"❌ File not uploaded: {file_info.get('upload_error', 'Unknown error')}")
+
+
 # ASYNC TEST VERSION (commented out)
 # def test_handler_locally_async():
 #     """Test the handler locally with sample input (async version)"""
@@ -720,8 +873,11 @@ if __name__ == "__main__":
         elif sys.argv[1] == "--test-file":
             # Test file input
             test_file_input()
+        elif sys.argv[1] == "--test-r2":
+            # Test R2 integration
+            test_r2_integration()
         else:
-            print("Usage: python runpod_handler.py [--test|--test-minimal|--validate|--test-image|--test-file]")
+            print("Usage: python runpod_handler.py [--test|--test-minimal|--validate|--test-image|--test-file|--test-r2]")
     else:
         # Start RunPod serverless with synchronous handler
         print("🚀 Starting RunPod Serverless Handler for Hunyuan 3D 2.1 (Synchronous)")

@@ -29,3 +29,5 @@ models
 /temp
 *.png
 .github/copilot-instructions.md
+
+.env
