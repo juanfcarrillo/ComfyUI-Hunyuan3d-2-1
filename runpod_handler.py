@@ -106,9 +106,12 @@ from PIL import Image
 # Load environment variables from .env file
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
-    print("⚠️ python-dotenv not installed. Environment variables will only be loaded from system environment.")
+    print(
+        "⚠️ python-dotenv not installed. Environment variables will only be loaded from system environment."
+    )
     pass
 
 # Import the workflow classes
@@ -165,9 +168,14 @@ class RunPodHunyuan3DHandler:
 
     def _check_r2_configuration(self):
         """Check if R2 is properly configured"""
-        required_r2_vars = ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET_NAME"]
+        required_r2_vars = [
+            "R2_ACCOUNT_ID",
+            "R2_ACCESS_KEY_ID",
+            "R2_SECRET_ACCESS_KEY",
+            "R2_BUCKET_NAME",
+        ]
         r2_configured = all(os.getenv(var) for var in required_r2_vars)
-        
+
         if r2_configured:
             try:
                 self.r2_uploader = create_model_uploader()
@@ -182,7 +190,9 @@ class RunPodHunyuan3DHandler:
         """Decode base64 image data to PIL Image, or load from file path"""
         try:
             # Check if it's a file path
-            if not base64_data.startswith("data:image") and not base64_data.startswith("iVBOR"):
+            if not base64_data.startswith("data:image") and not base64_data.startswith(
+                "iVBOR"
+            ):
                 # Assume it's a file path
                 if os.path.exists(base64_data):
                     print(f"📁 Loading image from file: {base64_data}")
@@ -213,6 +223,7 @@ class RunPodHunyuan3DHandler:
         """Save PIL Image temporarily for processing"""
         # Use Windows-compatible temp directory
         import tempfile
+
         temp_dir = tempfile.gettempdir()
         temp_path = os.path.join(temp_dir, f"{name}.png")
 
@@ -302,21 +313,23 @@ class RunPodHunyuan3DHandler:
             "target_face_count": 15000,
         }
 
-    def _upload_files_to_r2(self, output_files: list, workflow_type: str, output_name: str) -> list:
+    def _upload_files_to_r2(
+        self, output_files: list, workflow_type: str, output_name: str
+    ) -> list:
         """Upload output files to R2 and update file info with download URLs"""
         if not self.r2_uploader:
             print("ℹ️ R2 upload skipped - not configured")
             return output_files
 
         print("☁️ Uploading files to R2 storage...")
-        
+
         uploaded_files = []
-        
+
         for file_info in output_files:
             local_path = file_info["full_path"]
             filename = file_info["filename"]
             file_type = file_info["file_type"]
-            
+
             try:
                 # Create metadata for the upload
                 metadata = {
@@ -325,23 +338,23 @@ class RunPodHunyuan3DHandler:
                     "file_type": file_type,
                     "original_filename": filename,
                 }
-                
+
                 # Upload file
                 download_url = upload_3d_model(
                     local_file_path=local_path,
                     model_name=output_name,
                     workflow_type=workflow_type,
-                    additional_metadata=metadata
+                    additional_metadata=metadata,
                 )
-                
+
                 # Update file info with download URL
                 updated_file_info = file_info.copy()
                 updated_file_info["download_url"] = download_url
                 updated_file_info["uploaded_to_r2"] = True
-                
+
                 uploaded_files.append(updated_file_info)
                 print(f"✅ Uploaded {filename} to R2")
-                
+
             except Exception as e:
                 print(f"❌ Failed to upload {filename} to R2: {e}")
                 # Keep original file info but mark upload as failed
@@ -349,13 +362,13 @@ class RunPodHunyuan3DHandler:
                 failed_file_info["upload_error"] = str(e)
                 failed_file_info["uploaded_to_r2"] = False
                 uploaded_files.append(failed_file_info)
-        
+
         return uploaded_files
 
     def _cleanup_local_files(self, output_files: list):
         """Clean up local files after successful upload"""
         print("🧹 Cleaning up local files...")
-        
+
         for file_info in output_files:
             if file_info.get("uploaded_to_r2", False):
                 local_path = file_info["full_path"]
@@ -415,7 +428,7 @@ class RunPodHunyuan3DHandler:
             output_files = self._upload_files_to_r2(
                 output_files, "mesh", params["output_name"]
             )
-            
+
             # Clean up local files if requested
             if not params["keep_local_files"]:
                 self._cleanup_local_files(output_files)
@@ -505,7 +518,7 @@ class RunPodHunyuan3DHandler:
             output_files = self._upload_files_to_r2(
                 output_files, "enhanced", params["output_name"]
             )
-            
+
             # Clean up local files if requested
             if not params["keep_local_files"]:
                 self._cleanup_local_files(output_files)
@@ -631,6 +644,7 @@ def runpod_handler_sync(job: Dict[str, Any]) -> Dict[str, Any]:
 #     async for result in handler_instance.process_job(job_input):
 #         yield result
 
+
 # Test function for local development
 def test_handler_locally():
     """Test the handler locally with sample input from test_input.json"""
@@ -639,7 +653,7 @@ def test_handler_locally():
     print("🧪 Running local test with test_input.json...")
 
     try:
-        with open('test_input.json', 'r') as f:
+        with open("test_input.json", "r") as f:
             test_data = json.load(f)
     except Exception as e:
         print(f"❌ Failed to load test_input.json: {e}")
@@ -714,13 +728,13 @@ def test_image_decoding():
 
     # Load test input
     try:
-        with open('test_input.json', 'r') as f:
+        with open("test_input.json", "r") as f:
             test_data = json.load(f)
     except Exception as e:
         print(f"❌ Failed to load test_input.json: {e}")
         return False
 
-    base64_image = test_data['input']['input_image']
+    base64_image = test_data["input"]["input_image"]
     print(f"📝 Base64 image length: {len(base64_image)} characters")
 
     # Initialize handler
@@ -746,7 +760,9 @@ def test_image_decoding():
             # Try to reload the saved image
             try:
                 saved_image = Image.open(temp_path)
-                print(f"✅ Saved image reloaded: {saved_image.size} pixels, mode: {saved_image.mode}")
+                print(
+                    f"✅ Saved image reloaded: {saved_image.size} pixels, mode: {saved_image.mode}"
+                )
 
                 # Clean up
                 os.remove(temp_path)
@@ -764,6 +780,7 @@ def test_image_decoding():
     except Exception as e:
         print(f"❌ Image decoding test failed: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -820,16 +837,18 @@ def test_r2_integration():
 
     handler = RunPodHunyuan3DHandler()
     result = handler.process_job_sync(test_input)
-    
+
     print(f"📤 Test result: {json.dumps(result, indent=2)}")
-    
+
     # Check if files were uploaded
     if result.get("status") == "success":
         for file_info in result.get("output_files", []):
             if file_info.get("uploaded_to_r2"):
                 print(f"✅ File uploaded to R2: {file_info['download_url']}")
             else:
-                print(f"❌ File not uploaded: {file_info.get('upload_error', 'Unknown error')}")
+                print(
+                    f"❌ File not uploaded: {file_info.get('upload_error', 'Unknown error')}"
+                )
 
 
 # ASYNC TEST VERSION (commented out)
@@ -877,7 +896,9 @@ if __name__ == "__main__":
             # Test R2 integration
             test_r2_integration()
         else:
-            print("Usage: python runpod_handler.py [--test|--test-minimal|--validate|--test-image|--test-file|--test-r2]")
+            print(
+                "Usage: python runpod_handler.py [--test|--test-minimal|--validate|--test-image|--test-file|--test-r2]"
+            )
     else:
         # Start RunPod serverless with synchronous handler
         print("🚀 Starting RunPod Serverless Handler for Hunyuan 3D 2.1 (Synchronous)")
