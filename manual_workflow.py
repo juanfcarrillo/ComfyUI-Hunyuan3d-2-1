@@ -8,8 +8,7 @@ from 2D images using the Hunyuan 3D 2.1 model.
 WORKFLOWS AVAILABLE:
 1. ManualHunyuan3DWorkflow - Mesh generation only
 2. ManualHunyuan3DTextureWorkflow - Texture generation for existing meshes
-3. CompleteHunyuan3DWorkflow - Full pipeline (mesh + texture)
-4. EnhancedHunyuan3DWorkflow - **RECOMMENDED** (mesh + texture + decimation + full camera control)
+3. EnhancedHunyuan3DWorkflow - **RECOMMENDED** (mesh + texture + decimation + full camera control)
 
 WORKFLOW COMPARISON:
 ==================
@@ -26,14 +25,8 @@ ManualHunyuan3DTextureWorkflow:
 - Full camera configuration control
 - Output: Textured GLB file in output/3D/
 
-CompleteHunyuan3DWorkflow:
-- Combines mesh generation + texture generation
-- Uses default camera settings (6 views)
-- Moderate memory usage
-- Output: Base mesh + textured mesh in output/3D/
-
 EnhancedHunyuan3DWorkflow (RECOMMENDED):
-- All features of Complete workflow
+- Full pipeline combining mesh generation + texture generation
 - PLUS automatic mesh decimation for optimal performance
 - PLUS full camera configuration control
 - PLUS advanced memory management
@@ -69,12 +62,6 @@ python manual_workflow.py --workflow mesh --input-image assets/mune.png
 # Basic mesh generation with background removal
 python manual_workflow.py --workflow mesh --input-image assets/mune.png --remove-background
 
-# Complete pipeline (mesh + texture)
-python manual_workflow.py --workflow complete --input-image assets/mune.png
-
-# Complete pipeline with background removal
-python manual_workflow.py --workflow complete --input-image assets/mune.png --remove-background
-
 # Enhanced pipeline (recommended for 16GB VRAM)
 python manual_workflow.py --workflow enhanced --input-image assets/mune.png
 
@@ -93,10 +80,7 @@ REQUIREMENTS:
 
 import torch
 import gc
-import logging
 from PIL import Image
-import numpy as np
-import os
 
 # Import the node classes from the nodes.py file
 from nodes import (
@@ -116,28 +100,7 @@ from nodes import (
     Hy3D21MeshlibDecimate,
     # Utility functions
     pil2tensor,
-    tensor2pil,
-    hy3dpaintimages_to_tensor,
-    convert_ndarray_to_pil,
-    convert_tensor_images_to_pil,
 )
-
-from realesrgan import RealESRGANer
-from basicsr.archs.rrdbnet_arch import RRDBNet
-
-# Background removal imports
-try:
-    from hy3dshape.hy3dshape.rembg import BackgroundRemover as RembgRemover
-    REMBG_AVAILABLE = True
-except ImportError:
-    REMBG_AVAILABLE = False
-
-try:
-    import insightface
-    from insightface.app import FaceAnalysis
-    INSIGHTFACE_AVAILABLE = True
-except ImportError:
-    INSIGHTFACE_AVAILABLE = False
 
 
 class BackgroundRemover:
@@ -152,11 +115,16 @@ class BackgroundRemover:
         # Check if the ComfyUI InSPyReNet custom node is available
         try:
             from transparent_background import Remover
+
             self.remover = Remover(jit=self.use_jit)
             self.inspyrenet_available = True
-            print("✅ InSPyReNet background removal initialized via transparent-background library")
+            print(
+                "✅ InSPyReNet background removal initialized via transparent-background library"
+            )
             print(f"   Threshold: {self.threshold}, JIT: {self.use_jit}")
-            print("   This uses the actual InSPyReNet model architecture for superior quality")
+            print(
+                "   This uses the actual InSPyReNet model architecture for superior quality"
+            )
         except ImportError:
             print("❌ transparent-background library not available")
             print("   Please install ComfyUI-Inspyrenet-Rembg custom node")
@@ -178,7 +146,7 @@ class BackgroundRemover:
             print(f"🎯 Processing image with InSPyReNet (threshold: {thresh})...")
 
             # Convert to RGBA for transparency
-            result = self.remover.process(image, type='rgba', threshold=thresh)
+            result = self.remover.process(image, type="rgba", threshold=thresh)
             print("✅ InSPyReNet background removal completed successfully")
             return result
 
@@ -211,6 +179,7 @@ class BackgroundRemover:
             if self.inspyrenet_available:
                 try:
                     from transparent_background import Remover
+
                     self.remover = Remover(jit=self.use_jit)
                     print(f"✅ Remover updated with JIT: {self.use_jit}")
                 except Exception as e:
@@ -237,7 +206,14 @@ class ManualHunyuan3DWorkflow:
         self.simple_decimate = Hy3D21SimpleMeshlibDecimate()
         self.advanced_decimate = Hy3D21MeshlibDecimate()
 
-    def load_image(self, image_path, remove_background=False, bg_model_path=None, bg_threshold=0.5, bg_use_jit=False):
+    def load_image(
+        self,
+        image_path,
+        remove_background=False,
+        bg_model_path=None,
+        bg_threshold=0.5,
+        bg_use_jit=False,
+    ):
         """Load image and convert to tensor format expected by the nodes"""
         if isinstance(image_path, str):
             image = Image.open(image_path).convert("RGB")
@@ -247,7 +223,9 @@ class ManualHunyuan3DWorkflow:
         # Optional background removal
         if remove_background:
             print("Removing background from input image...")
-            bg_remover = BackgroundRemover(bg_model_path, threshold=bg_threshold, use_jit=bg_use_jit)
+            bg_remover = BackgroundRemover(
+                bg_model_path, threshold=bg_threshold, use_jit=bg_use_jit
+            )
             image = bg_remover.remove_background(image)
             print("Background removal completed")
 
@@ -261,7 +239,9 @@ class ManualHunyuan3DWorkflow:
 
     def decimate_mesh(self, trimesh, target_faces=15000, method="simple"):
         """Decimate mesh to reduce face count for better performance"""
-        print(f"   Decimating mesh from {self.get_number_of_faces(trimesh)} to ~{target_faces} faces...")
+        print(
+            f"   Decimating mesh from {self.get_number_of_faces(trimesh)} to ~{target_faces} faces..."
+        )
 
         if method == "simple":
             decimated = self.simple_decimate.decimate(
@@ -278,7 +258,9 @@ class ManualHunyuan3DWorkflow:
                 maxError=0.01,  # Low error tolerance
             )[0]
 
-        print(f"   Decimation complete. Faces: {self.get_number_of_faces(trimesh)} → {self.get_number_of_faces(decimated)}")
+        print(
+            f"   Decimation complete. Faces: {self.get_number_of_faces(trimesh)} → {self.get_number_of_faces(decimated)}"
+        )
         return decimated
 
     def run_workflow(
@@ -328,7 +310,13 @@ class ManualHunyuan3DWorkflow:
 
         # Step 2: Load and prepare input image
         print("2. Loading input image...")
-        image_tensor = self.load_image(input_image_path, remove_background=remove_background, bg_model_path=bg_model_path, bg_threshold=bg_threshold, bg_use_jit=bg_use_jit)
+        image_tensor = self.load_image(
+            input_image_path,
+            remove_background=remove_background,
+            bg_model_path=bg_model_path,
+            bg_threshold=bg_threshold,
+            bg_use_jit=bg_use_jit,
+        )
         print(f"   Image loaded from: {input_image_path}")
         print(f"   Image shape: {image_tensor.shape}")
 
@@ -387,16 +375,18 @@ class ManualHunyuan3DWorkflow:
 
         # Optional: Decimate mesh for better texture generation performance
         # Use 80% of max_facenum as target if mesh is overly complex
-        decimation_threshold = max_facenum * 1.2  # Decimate if faces exceed 120% of max_facenum
+        decimation_threshold = (
+            max_facenum * 1.2
+        )  # Decimate if faces exceed 120% of max_facenum
         target_faces = int(max_facenum * 0.8)  # Target 80% of max_facenum
-        
+
         if num_faces_after > decimation_threshold:
-            print(f"7. Decimating mesh for optimal texture generation...")
-            print(f"   Target: {target_faces} faces (80% of max_facenum: {max_facenum})")
+            print("7. Decimating mesh for optimal texture generation...")
+            print(
+                f"   Target: {target_faces} faces (80% of max_facenum: {max_facenum})"
+            )
             processed_trimesh = self.decimate_mesh(
-                processed_trimesh,
-                target_faces=target_faces,
-                method="simple"
+                processed_trimesh, target_faces=target_faces, method="simple"
             )
             num_faces_after = self.get_number_of_faces(processed_trimesh)
             print(f"   Final face count: {num_faces_after}")
@@ -443,7 +433,14 @@ class ManualHunyuan3DTextureWorkflow:
         self.upscale_image = Hy3D21UpscaleImage()
         self.export_mesh = Hy3D21ExportMesh()
 
-    def load_image(self, image_path, remove_background=False, bg_model_path=None, bg_threshold=0.5, bg_use_jit=False):
+    def load_image(
+        self,
+        image_path,
+        remove_background=False,
+        bg_model_path=None,
+        bg_threshold=0.5,
+        bg_use_jit=False,
+    ):
         """Load image and convert to tensor format expected by the nodes"""
         if isinstance(image_path, str):
             image = Image.open(image_path).convert("RGB")
@@ -453,7 +450,9 @@ class ManualHunyuan3DTextureWorkflow:
         # Optional background removal
         if remove_background:
             print("Removing background from input image...")
-            bg_remover = BackgroundRemover(bg_model_path, threshold=bg_threshold, use_jit=bg_use_jit)
+            bg_remover = BackgroundRemover(
+                bg_model_path, threshold=bg_threshold, use_jit=bg_use_jit
+            )
             image = bg_remover.remove_background(image)
             print("Background removal completed")
 
@@ -505,9 +504,7 @@ class ManualHunyuan3DTextureWorkflow:
 
         # Step 1: Generate UV mapping for mesh
         print("1. Generating UV mapping...")
-        uv_wrapped_mesh = self.mesh_uv_wrap.process(
-            trimesh=input_trimesh
-        )[0]
+        uv_wrapped_mesh = self.mesh_uv_wrap.process(trimesh=input_trimesh)[0]
         print("   UV mapping completed")
 
         # Step 2: Configure camera settings
@@ -522,7 +519,13 @@ class ManualHunyuan3DTextureWorkflow:
 
         # Step 3: Load input image
         print("3. Loading input image...")
-        image_tensor = self.load_image(input_image_path, remove_background=remove_background, bg_model_path=bg_model_path, bg_threshold=bg_threshold, bg_use_jit=bg_use_jit)
+        image_tensor = self.load_image(
+            input_image_path,
+            remove_background=remove_background,
+            bg_model_path=bg_model_path,
+            bg_threshold=bg_threshold,
+            bg_use_jit=bg_use_jit,
+        )
         print(f"   Image loaded from: {input_image_path}")
         print(f"   Image shape: {image_tensor.shape}")
 
@@ -544,10 +547,10 @@ class ManualHunyuan3DTextureWorkflow:
         # Unpack the correct return values from MultiViewsGenerator (6 values)
         pipeline = multiviews_generator[0]
         albedo = multiviews_generator[1]  # albedo images
-        mr = multiviews_generator[2]      # mr images
-        positions = multiviews_generator[3]  # position maps
-        normals = multiviews_generator[4]    # normal maps
-        camera_config_out = multiviews_generator[5]  # camera config
+        mr = multiviews_generator[2]  # mr images
+        # positions = multiviews_generator[3]  # position maps
+        # normals = multiviews_generator[4]    # normal maps
+        # camera_config_out = multiviews_generator[5]  # camera config
         # Note: metadata is not returned by this version of the node
 
         print("   Multi-view generation completed")
@@ -663,123 +666,6 @@ class ManualHunyuan3DTextureWorkflow:
         return results
 
 
-class CompleteHunyuan3DWorkflow:
-    """Combined workflow that generates mesh and then applies textures"""
-
-    def __init__(self):
-        self.mesh_workflow = ManualHunyuan3DWorkflow()
-        self.texture_workflow = ManualHunyuan3DTextureWorkflow()
-
-    def run_complete_workflow(
-        self,
-        vae_model_name,
-        diffusion_model_name,
-        input_image_path,
-        output_mesh_name="complete_mesh",
-        # Mesh generation parameters
-        mesh_params=None,
-        # Texture generation parameters
-        texture_params=None,
-        # Background removal parameters
-        remove_background=False,
-        bg_model_path=None,
-        bg_threshold=0.5,
-        bg_use_jit=False,
-    ):
-
-        print("Starting Complete Hunyuan 3D 2.1 Workflow (Mesh + Texture)...")
-
-        # Default parameters optimized for 16GB VRAM
-        if mesh_params is None:
-            mesh_params = {
-                "steps": 30,  # Reduced for 16GB VRAM
-                "guidance_scale": 4.0,  # Reduced for stability
-                "seed": 42,
-                "max_facenum": 20000,  # Reduced for memory efficiency
-                "octree_resolution": 256,  # Reduced for 16GB VRAM
-                "num_chunks": 4000,  # Reduced for memory efficiency
-                "enable_flash_vdm": True,  # Memory efficient
-                "force_offload": True,  # Enable offloading
-            }
-
-        if texture_params is None:
-            texture_params = {
-                "view_size": 512,  # Reduced from 1024 for 16GB VRAM
-                "steps": 20,  # Reduced from 35
-                "guidance_scale": 4.0,  # Reduced from 5.6
-                "texture_size": 2048,  # Reduced from 4096
-                "upscale_albedo": True,  # Enable upscaling for quality
-                "upscale_mr": True,
-                "camera_azimuths": "0, 180, 90, 270, 45, 315",  # 6 views for better coverage
-                "camera_elevations": "0, 0, 0, 0, 30, 30",
-                "view_weights": "1.0, 1.0, 1.0, 1.0, 0.8, 0.8",
-                "ortho_scale": 1.10,
-                "normal_texture": True,
-                "unwrap_mesh": True,
-                "save_after_generate": False,
-                "correct_after_generate": "randomize",
-                "seed": 200434251488993,
-                # InPaint parameters
-                "vertex_inpaint": True,
-                "method": "NS",
-            }
-
-        # Step 1: Generate mesh
-        print("\n" + "=" * 60)
-        print("PHASE 1: MESH GENERATION")
-        print("=" * 60)
-
-        mesh_results = self.mesh_workflow.run_workflow(
-            vae_model_name=vae_model_name,
-            diffusion_model_name=diffusion_model_name,
-            input_image_path=input_image_path,
-            output_mesh_name=f"{output_mesh_name}_base",
-            remove_background=remove_background,
-            bg_model_path=bg_model_path,
-            bg_threshold=bg_threshold,
-            bg_use_jit=bg_use_jit,
-            **mesh_params,
-        )
-
-        # Step 2: Generate textures
-        print("\n" + "=" * 60)
-        print("PHASE 2: TEXTURE GENERATION")
-        print("=" * 60)
-
-        texture_results = self.texture_workflow.run_texture_workflow(
-            input_trimesh=mesh_results["processed_mesh"],
-            input_image_path=input_image_path,
-            output_mesh_name=f"{output_mesh_name}_textured",
-            remove_background=remove_background,
-            bg_model_path=bg_model_path,
-            bg_threshold=bg_threshold,
-            bg_use_jit=bg_use_jit,
-            **texture_params,
-        )
-
-        # Combine results
-        complete_results = {
-            "mesh_results": mesh_results,
-            "texture_results": texture_results,
-            "final_mesh_path": texture_results["final_output_path"],
-            "base_mesh_path": mesh_results["output_path"],
-        }
-
-        # Print final summary
-        print("\n" + "=" * 60)
-        print("COMPLETE WORKFLOW SUMMARY")
-        print("=" * 60)
-        print(f"Input image: {input_image_path}")
-        print(f"Base mesh: {mesh_results['output_path']}")
-        print(f"Textured mesh: {texture_results['final_output_path']}")
-        print(f"Original faces: {mesh_results['num_faces_before']:,}")
-        print(f"Final faces: {mesh_results['num_faces_after']:,}")
-        print(f"Generated views: {len(texture_results['multiview_images'])}")
-        print("=" * 60)
-
-        return complete_results
-
-
 class EnhancedHunyuan3DWorkflow:
     """Enhanced workflow with mesh decimation and better memory management"""
 
@@ -810,7 +696,9 @@ class EnhancedHunyuan3DWorkflow:
         bg_params=None,
     ):
 
-        print("Starting Enhanced Hunyuan 3D 2.1 Workflow (Mesh + Texture + Decimation)...")
+        print(
+            "Starting Enhanced Hunyuan 3D 2.1 Workflow (Mesh + Texture + Decimation)..."
+        )
 
         # Handle background parameters
         if bg_params is None:
@@ -818,7 +706,7 @@ class EnhancedHunyuan3DWorkflow:
                 "threshold": 0.5,
                 "use_jit": False,
             }
-        
+
         bg_threshold = bg_params.get("threshold", 0.5)
         bg_use_jit = bg_params.get("use_jit", False)
 
@@ -894,12 +782,16 @@ class EnhancedHunyuan3DWorkflow:
             # Use 80% of max_facenum from mesh_params if available, otherwise use target_face_count
             if mesh_params and "max_facenum" in mesh_params:
                 dynamic_target = int(mesh_params["max_facenum"] * 0.8)
-                print(f"   Using dynamic target: {dynamic_target} faces (80% of max_facenum: {mesh_params['max_facenum']})")
+                print(
+                    f"   Using dynamic target: {dynamic_target} faces (80% of max_facenum: {mesh_params['max_facenum']})"
+                )
             else:
                 dynamic_target = target_face_count
                 print(f"   Using fixed target: {dynamic_target} faces")
 
-            print(f"   Decimating mesh from {mesh_results['num_faces_after']} to ~{dynamic_target} faces...")
+            print(
+                f"   Decimating mesh from {mesh_results['num_faces_after']} to ~{dynamic_target} faces..."
+            )
 
             decimated_mesh = self.mesh_decimator.decimate(
                 trimesh=processed_mesh,
@@ -913,10 +805,11 @@ class EnhancedHunyuan3DWorkflow:
 
         else:
             final_mesh_for_texture = processed_mesh
-            final_face_count = mesh_results['num_faces_after']
+            final_face_count = mesh_results["num_faces_after"]
 
         # Clear memory before texture generation
         import gc
+
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -960,7 +853,9 @@ class EnhancedHunyuan3DWorkflow:
         if enable_decimation:
             print(f"Final faces: {final_face_count:,}")
         print(f"Generated views: {len(texture_results['multiview_images'])}")
-        print(f"Texture size: {texture_params['texture_size']}x{texture_params['texture_size']}")
+        print(
+            f"Texture size: {texture_params['texture_size']}x{texture_params['texture_size']}"
+        )
         print("=" * 60)
 
         return enhanced_results
@@ -973,7 +868,7 @@ def main():
     parser = argparse.ArgumentParser(description="Hunyuan 3D 2.1 Manual Workflow")
     parser.add_argument(
         "--workflow",
-        choices=["mesh", "texture", "complete", "enhanced"],
+        choices=["mesh", "texture", "enhanced"],
         default="enhanced",
         help="Which workflow to run (enhanced is recommended for 16GB VRAM)",
     )
@@ -993,19 +888,24 @@ def main():
         help="Diffusion model filename",
     )
     parser.add_argument(
-        "--remove-background", action="store_true", help="Remove background from input image"
+        "--remove-background",
+        action="store_true",
+        help="Remove background from input image",
     )
     parser.add_argument(
-        "--bg-model-path", type=str, default="models/RMBG/INSPYRENET/inspyrenet.safetensors", 
-        help="Path to background removal model"
+        "--bg-model-path",
+        type=str,
+        default="models/RMBG/INSPYRENET/inspyrenet.safetensors",
+        help="Path to background removal model",
     )
     parser.add_argument(
-        "--bg-threshold", type=float, default=0.5, 
-        help="Background removal threshold (0.0-1.0, default: 0.5)"
+        "--bg-threshold",
+        type=float,
+        default=0.5,
+        help="Background removal threshold (0.0-1.0, default: 0.5)",
     )
     parser.add_argument(
-        "--bg-use-jit", action="store_true", 
-        help="Use PyTorch JIT for faster inference"
+        "--bg-use-jit", action="store_true", help="Use PyTorch JIT for faster inference"
     )
 
     args = parser.parse_args()
@@ -1029,9 +929,21 @@ def main():
                 "force_offload": True,
                 "file_format": "glb",
                 "save_file": True,
-                **({"remove_background": args.remove_background} if args.remove_background else {}),
-                **({"bg_model_path": args.bg_model_path} if args.bg_model_path != parser.get_default("bg_model_path") else {}),
-                **({"bg_threshold": args.bg_threshold} if args.bg_threshold != parser.get_default("bg_threshold") else {}),
+                **(
+                    {"remove_background": args.remove_background}
+                    if args.remove_background
+                    else {}
+                ),
+                **(
+                    {"bg_model_path": args.bg_model_path}
+                    if args.bg_model_path != parser.get_default("bg_model_path")
+                    else {}
+                ),
+                **(
+                    {"bg_threshold": args.bg_threshold}
+                    if args.bg_threshold != parser.get_default("bg_threshold")
+                    else {}
+                ),
                 **({"bg_use_jit": args.bg_use_jit} if args.bg_use_jit else {}),
             }
             results = workflow.run_workflow(**config)
@@ -1051,23 +963,7 @@ def main():
         elif args.workflow == "texture":
             # Run texture generation only (requires existing mesh)
             print("Texture-only workflow requires an existing trimesh object.")
-            print("Please use the complete or enhanced workflow instead.")
-
-        elif args.workflow == "complete":
-            # Run complete workflow
-            workflow = CompleteHunyuan3DWorkflow()
-            results = workflow.run_complete_workflow(
-                vae_model_name=args.vae_model,
-                diffusion_model_name=args.diffusion_model,
-                input_image_path=args.input_image,
-                output_mesh_name=args.output_name,
-                **({"remove_background": args.remove_background} if args.remove_background else {}),
-                **({"bg_model_path": args.bg_model_path} if args.bg_model_path != parser.get_default("bg_model_path") else {}),
-                **({"bg_threshold": args.bg_threshold} if args.bg_threshold != parser.get_default("bg_threshold") else {}),
-                **({"bg_use_jit": args.bg_use_jit} if args.bg_use_jit else {}),
-            )
-            print("\nComplete workflow finished!")
-            print(f"Final textured mesh: {results['final_mesh_path']}")
+            print("Please use the enhanced workflow instead.")
 
         elif args.workflow == "enhanced":
             # Run enhanced workflow (recommended for 16GB VRAM)
@@ -1102,8 +998,16 @@ def main():
                 input_image_path=args.input_image,
                 output_mesh_name=args.output_name,
                 texture_params=default_texture_params,  # Pass texture params with camera configs
-                **({"remove_background": args.remove_background} if args.remove_background else {}),
-                **({"bg_model_path": args.bg_model_path} if args.bg_model_path != parser.get_default("bg_model_path") else {}),
+                **(
+                    {"remove_background": args.remove_background}
+                    if args.remove_background
+                    else {}
+                ),
+                **(
+                    {"bg_model_path": args.bg_model_path}
+                    if args.bg_model_path != parser.get_default("bg_model_path")
+                    else {}
+                ),
                 bg_params={
                     "threshold": args.bg_threshold,
                     "use_jit": args.bg_use_jit,
@@ -1111,8 +1015,10 @@ def main():
             )
             print("\nEnhanced workflow finished!")
             print(f"Final textured mesh: {results['final_mesh_path']}")
-            if results['decimated_mesh'] is not None:
-                print(f"Mesh was decimated to {results['final_face_count']:,} faces for optimal performance")
+            if results["decimated_mesh"] is not None:
+                print(
+                    f"Mesh was decimated to {results['final_face_count']:,} faces for optimal performance"
+                )
 
     except Exception as e:
         print(f"Error running workflow: {e}")
@@ -1146,35 +1052,7 @@ if __name__ == "__main__":
 #     force_offload=True,
 # )
 
-# # 2. Complete workflow (mesh + texture)
-# from manual_workflow import CompleteHunyuan3DWorkflow
-#
-# complete_workflow = CompleteHunyuan3DWorkflow()
-# results = complete_workflow.run_complete_workflow(
-#     vae_model_name="model.fp16.ckpt",
-#     diffusion_model_name="model.fp16.ckpt",
-#     input_image_path="assets/mune.png",
-#     output_mesh_name="my_textured_mesh",
-#     mesh_params={
-#         "steps": 25,
-#         "guidance_scale": 3.5,
-#         "max_facenum": 20000,
-#         "octree_resolution": 224,
-#         "num_chunks": 3000,
-#         "enable_flash_vdm": True,
-#         "force_offload": True,
-#     },
-#     texture_params={
-#         "view_size": 512,
-#         "steps": 15,
-#         "guidance_scale": 3.5,
-#         "texture_size": 1024,
-#         "upscale_albedo": False,  # Save memory
-#         "upscale_mr": False,
-#     }
-# )
-
-# # 3. Enhanced workflow (recommended - includes mesh decimation)
+# # 2. Enhanced workflow (recommended - includes mesh decimation)
 # from manual_workflow import EnhancedHunyuan3DWorkflow
 #
 # enhanced_workflow = EnhancedHunyuan3DWorkflow()
