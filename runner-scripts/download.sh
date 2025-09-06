@@ -7,8 +7,8 @@ echo "########################################"
 
 # Models
 
-if [ ! -d "/root/app/models" ] ; then
-  mkdir -p /root/app/models
+if [ ! -d "/app/models" ] ; then
+  mkdir -p /app/models
 fi
 
 aria2c \
