@@ -1,11 +1,8 @@
 #!/bin/bash
 set -e
 
-chmod +x /app/runner-scripts/download.sh
-bash /app/runner-scripts/download.sh
-
-chmod +x /app/runner-scripts/compile-texture-modules.sh
-bash /app/runner-scripts/compile-texture-modules.sh
+# chmod +x /app/runner-scripts/compile-texture-modules.sh
+# bash /app/runner-scripts/compile-texture-modules.sh
 
 echo "########################################"
 echo "[INFO] Starting Server..."

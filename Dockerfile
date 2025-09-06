@@ -90,11 +90,15 @@ RUN pip install --no-cache-dir \
     realesrgan \
     basicsr \
     facexlib \
-    gfpgan
+    gfpgan \
+    insightface \
+    transparent-background
 
 # Copy project
 COPY . .
 RUN chmod +x /app/runner-scripts/*.sh
+RUN bash /app/runner-scripts/download.sh
+RUN bash /app/runner-scripts/compile-texture-modules.sh
 
 # Use the enhanced entrypoint
 CMD ["bash", "/app/runner-scripts/entrypoint.sh"]

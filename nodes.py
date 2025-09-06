@@ -495,7 +495,7 @@ class Hy3DMultiViewsGenerator:
 
         image = tensor2pil(image)
 
-        temp_folder_path = os.path.join(comfy_path, "temp")
+        temp_folder_path = os.path.join(script_directory, "temp")
         os.makedirs(temp_folder_path, exist_ok=True)
         temp_output_path = os.path.join(temp_folder_path, "textured_mesh.obj")
 
@@ -632,14 +632,13 @@ class Hy3DInPaint:
         pipeline.set_texture_albedo(albedo)
         pipeline.set_texture_mr(mr)
 
-        temp_folder_path = os.path.join(comfy_path, "temp")
+        temp_folder_path = os.path.join(script_directory, "temp")
         os.makedirs(temp_folder_path, exist_ok=True)
         output_mesh_path = os.path.join(temp_folder_path, f"{output_mesh_name}.obj")
         output_temp_path = pipeline.save_mesh(output_mesh_path)
 
-        output_folder_path = os.path.join(comfy_path, "output")
-        os.makedirs(output_folder_path, exist_ok=True)
-        output_glb_path = os.path.join(output_folder_path, f"{output_mesh_name}.glb")
+        output_glb_path = os.path.join(script_directory, "output", "3D", f"{output_mesh_name}.glb")
+        os.makedirs(os.path.dirname(output_glb_path), exist_ok=True)
         shutil.copyfile(output_temp_path, output_glb_path)
 
         trimesh = Trimesh.load(output_glb_path, force="mesh")

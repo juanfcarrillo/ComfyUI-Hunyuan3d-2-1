@@ -25,3 +25,7 @@ lib
 
 models
 /output
+*.glb
+/temp
+*.png
+.github/copilot-instructions.md
