@@ -38,6 +38,7 @@ EnhancedHunyuan3DWorkflow (RECOMMENDED):
 - PLUS full camera configuration control
 - PLUS advanced memory management
 - PLUS customizable texture parameters
+- PLUS optional background removal with INSPYRENET/rembg fallback
 - Best for 16GB VRAM systems
 - Output: Base mesh + decimated mesh + final textured mesh in output/3D/
 
@@ -65,16 +66,29 @@ USAGE EXAMPLES:
 # Basic mesh generation
 python manual_workflow.py --workflow mesh --input-image assets/mune.png
 
+# Basic mesh generation with background removal
+python manual_workflow.py --workflow mesh --input-image assets/mune.png --remove-background
+
 # Complete pipeline (mesh + texture)
 python manual_workflow.py --workflow complete --input-image assets/mune.png
 
+# Complete pipeline with background removal
+python manual_workflow.py --workflow complete --input-image assets/mune.png --remove-background
+
 # Enhanced pipeline (recommended for 16GB VRAM)
 python manual_workflow.py --workflow enhanced --input-image assets/mune.png
+
+# Enhanced pipeline with background removal
+python manual_workflow.py --workflow enhanced --input-image assets/mune.png --remove-background
+
+# Custom background removal model path
+python manual_workflow.py --workflow enhanced --input-image assets/mune.png --remove-background --bg-model-path "models/RMBG/INSPYRENET/inspyrenet.safetensors"
 
 REQUIREMENTS:
 - All dependencies from requirements.txt must be installed
 - Models should be placed in the appropriate directories
 - Virtual environment should be activated before running
+- For background removal: insightface package for INSPYRENET (optional, falls back to rembg)
 """
 
 import torch
@@ -111,6 +125,97 @@ from nodes import (
 from realesrgan import RealESRGANer
 from basicsr.archs.rrdbnet_arch import RRDBNet
 
+# Background removal imports
+try:
+    from hy3dshape.hy3dshape.rembg import BackgroundRemover as RembgRemover
+    REMBG_AVAILABLE = True
+except ImportError:
+    REMBG_AVAILABLE = False
+
+try:
+    import insightface
+    from insightface.app import FaceAnalysis
+    INSIGHTFACE_AVAILABLE = True
+except ImportError:
+    INSIGHTFACE_AVAILABLE = False
+
+
+class BackgroundRemover:
+    """Enhanced background remover using ComfyUI InSPyReNet custom node"""
+
+    def __init__(self, model_path=None, threshold=0.5, use_jit=False):
+        self.model_path = model_path or "models/RMBG/INSPYRENET/inspyrenet.safetensors"
+        self.threshold = threshold
+        self.use_jit = use_jit
+        self.inspyrenet_available = False
+
+        # Check if the ComfyUI InSPyReNet custom node is available
+        try:
+            from transparent_background import Remover
+            self.remover = Remover(jit=self.use_jit)
+            self.inspyrenet_available = True
+            print("✅ InSPyReNet background removal initialized via transparent-background library")
+            print(f"   Threshold: {self.threshold}, JIT: {self.use_jit}")
+            print("   This uses the actual InSPyReNet model architecture for superior quality")
+        except ImportError:
+            print("❌ transparent-background library not available")
+            print("   Please install ComfyUI-Inspyrenet-Rembg custom node")
+            self.inspyrenet_available = False
+        except Exception as e:
+            print(f"❌ Failed to initialize InSPyReNet: {e}")
+            self.inspyrenet_available = False
+
+    def remove_background_inspyrenet(self, image, threshold=None):
+        """Remove background using actual InSPyReNet model"""
+        try:
+            if not self.inspyrenet_available:
+                print("InSPyReNet not available")
+                return None
+
+            # Use provided threshold or default
+            thresh = threshold if threshold is not None else self.threshold
+
+            print(f"🎯 Processing image with InSPyReNet (threshold: {thresh})...")
+
+            # Convert to RGBA for transparency
+            result = self.remover.process(image, type='rgba', threshold=thresh)
+            print("✅ InSPyReNet background removal completed successfully")
+            return result
+
+        except Exception as e:
+            print(f"❌ InSPyReNet background removal failed: {e}")
+            return None
+
+    def remove_background(self, image, threshold=None):
+        """Remove background from image using InSPyReNet"""
+        if isinstance(image, str):
+            image = Image.open(image).convert("RGB")
+
+        if self.inspyrenet_available:
+            print("🎯 Using actual InSPyReNet model for background removal...")
+            result = self.remove_background_inspyrenet(image, threshold)
+            if result is not None:
+                return result
+
+        # If InSPyReNet fails, return original image
+        print("❌ InSPyReNet background removal failed, returning original image")
+        return image
+
+    def update_settings(self, threshold=None, use_jit=None):
+        """Update background removal settings"""
+        if threshold is not None:
+            self.threshold = threshold
+        if use_jit is not None:
+            self.use_jit = use_jit
+            # Reinitialize remover with new JIT setting
+            if self.inspyrenet_available:
+                try:
+                    from transparent_background import Remover
+                    self.remover = Remover(jit=self.use_jit)
+                    print(f"✅ Remover updated with JIT: {self.use_jit}")
+                except Exception as e:
+                    print(f"❌ Failed to update remover: {e}")
+
 
 def cleanup_memory():
     """Aggressive memory cleanup"""
@@ -132,12 +237,19 @@ class ManualHunyuan3DWorkflow:
         self.simple_decimate = Hy3D21SimpleMeshlibDecimate()
         self.advanced_decimate = Hy3D21MeshlibDecimate()
 
-    def load_image(self, image_path):
+    def load_image(self, image_path, remove_background=False, bg_model_path=None, bg_threshold=0.5, bg_use_jit=False):
         """Load image and convert to tensor format expected by the nodes"""
         if isinstance(image_path, str):
             image = Image.open(image_path).convert("RGB")
         else:
             image = image_path
+
+        # Optional background removal
+        if remove_background:
+            print("Removing background from input image...")
+            bg_remover = BackgroundRemover(bg_model_path, threshold=bg_threshold, use_jit=bg_use_jit)
+            image = bg_remover.remove_background(image)
+            print("Background removal completed")
 
         # Convert PIL to tensor format (add batch dimension)
         image_tensor = pil2tensor(image)
@@ -199,6 +311,11 @@ class ManualHunyuan3DWorkflow:
         # Export parameters
         file_format="glb",
         save_file=True,
+        # Background removal parameters
+        remove_background=False,
+        bg_model_path=None,
+        bg_threshold=0.5,
+        bg_use_jit=False,
     ):
 
         print("Starting Hunyuan 3D 2.1 Manual Workflow...")
@@ -211,7 +328,7 @@ class ManualHunyuan3DWorkflow:
 
         # Step 2: Load and prepare input image
         print("2. Loading input image...")
-        image_tensor = self.load_image(input_image_path)
+        image_tensor = self.load_image(input_image_path, remove_background=remove_background, bg_model_path=bg_model_path, bg_threshold=bg_threshold, bg_use_jit=bg_use_jit)
         print(f"   Image loaded from: {input_image_path}")
         print(f"   Image shape: {image_tensor.shape}")
 
@@ -326,12 +443,19 @@ class ManualHunyuan3DTextureWorkflow:
         self.upscale_image = Hy3D21UpscaleImage()
         self.export_mesh = Hy3D21ExportMesh()
 
-    def load_image(self, image_path):
+    def load_image(self, image_path, remove_background=False, bg_model_path=None, bg_threshold=0.5, bg_use_jit=False):
         """Load image and convert to tensor format expected by the nodes"""
         if isinstance(image_path, str):
             image = Image.open(image_path).convert("RGB")
         else:
             image = image_path
+
+        # Optional background removal
+        if remove_background:
+            print("Removing background from input image...")
+            bg_remover = BackgroundRemover(bg_model_path, threshold=bg_threshold, use_jit=bg_use_jit)
+            image = bg_remover.remove_background(image)
+            print("Background removal completed")
 
         # Convert PIL to tensor format (add batch dimension)
         image_tensor = pil2tensor(image)
@@ -370,6 +494,11 @@ class ManualHunyuan3DTextureWorkflow:
         # Export parameters
         file_format="glb",
         save_file=True,
+        # Background removal parameters
+        remove_background=True,
+        bg_model_path=None,
+        bg_threshold=0.5,
+        bg_use_jit=False,
     ):
 
         print("Starting Hunyuan 3D 2.1 Texture Generation Workflow...")
@@ -393,7 +522,7 @@ class ManualHunyuan3DTextureWorkflow:
 
         # Step 3: Load input image
         print("3. Loading input image...")
-        image_tensor = self.load_image(input_image_path)
+        image_tensor = self.load_image(input_image_path, remove_background=remove_background, bg_model_path=bg_model_path, bg_threshold=bg_threshold, bg_use_jit=bg_use_jit)
         print(f"   Image loaded from: {input_image_path}")
         print(f"   Image shape: {image_tensor.shape}")
 
@@ -551,6 +680,11 @@ class CompleteHunyuan3DWorkflow:
         mesh_params=None,
         # Texture generation parameters
         texture_params=None,
+        # Background removal parameters
+        remove_background=False,
+        bg_model_path=None,
+        bg_threshold=0.5,
+        bg_use_jit=False,
     ):
 
         print("Starting Complete Hunyuan 3D 2.1 Workflow (Mesh + Texture)...")
@@ -600,6 +734,10 @@ class CompleteHunyuan3DWorkflow:
             diffusion_model_name=diffusion_model_name,
             input_image_path=input_image_path,
             output_mesh_name=f"{output_mesh_name}_base",
+            remove_background=remove_background,
+            bg_model_path=bg_model_path,
+            bg_threshold=bg_threshold,
+            bg_use_jit=bg_use_jit,
             **mesh_params,
         )
 
@@ -612,6 +750,10 @@ class CompleteHunyuan3DWorkflow:
             input_trimesh=mesh_results["processed_mesh"],
             input_image_path=input_image_path,
             output_mesh_name=f"{output_mesh_name}_textured",
+            remove_background=remove_background,
+            bg_model_path=bg_model_path,
+            bg_threshold=bg_threshold,
+            bg_use_jit=bg_use_jit,
             **texture_params,
         )
 
@@ -662,9 +804,23 @@ class EnhancedHunyuan3DWorkflow:
         preserve_boundary=True,
         boundary_weight=1.0,
         preserve_topology=True,
+        # Background removal parameters
+        remove_background=True,
+        bg_model_path=None,
+        bg_params=None,
     ):
 
         print("Starting Enhanced Hunyuan 3D 2.1 Workflow (Mesh + Texture + Decimation)...")
+
+        # Handle background parameters
+        if bg_params is None:
+            bg_params = {
+                "threshold": 0.5,
+                "use_jit": False,
+            }
+        
+        bg_threshold = bg_params.get("threshold", 0.5)
+        bg_use_jit = bg_params.get("use_jit", False)
 
         # Default parameters optimized for 16GB VRAM
         if mesh_params is None:
@@ -693,8 +849,8 @@ class EnhancedHunyuan3DWorkflow:
                 "steps": 15,  # Further reduced
                 "guidance_scale": 3.5,  # Further reduced
                 "texture_size": 1024,  # Further reduced for 16GB VRAM
-                "upscale_albedo": False,  # Disable upscaling to save memory
-                "upscale_mr": False,  # Disable upscaling to save memory
+                "upscale_albedo": True,  # Disable upscaling to save memory
+                "upscale_mr": True,  # Disable upscaling to save memory
                 # Camera configuration options
                 "camera_azimuths": "0, 180, 90, 270, 45, 315",  # 6 views for better coverage
                 "camera_elevations": "0, 0, 0, 0, 30, 30",
@@ -720,6 +876,10 @@ class EnhancedHunyuan3DWorkflow:
             diffusion_model_name=diffusion_model_name,
             input_image_path=input_image_path,
             output_mesh_name=f"{output_mesh_name}_base",
+            remove_background=remove_background,
+            bg_model_path=bg_model_path,
+            bg_threshold=bg_threshold,
+            bg_use_jit=bg_use_jit,
             **mesh_params,
         )
 
@@ -769,6 +929,10 @@ class EnhancedHunyuan3DWorkflow:
             input_trimesh=final_mesh_for_texture,
             input_image_path=input_image_path,
             output_mesh_name=f"{output_mesh_name}_textured",
+            remove_background=remove_background,
+            bg_model_path=bg_model_path,
+            bg_threshold=bg_threshold,
+            bg_use_jit=bg_use_jit,
             **texture_params,
         )
 
@@ -828,6 +992,21 @@ def main():
         default="model.fp16.ckpt",
         help="Diffusion model filename",
     )
+    parser.add_argument(
+        "--remove-background", action="store_true", help="Remove background from input image"
+    )
+    parser.add_argument(
+        "--bg-model-path", type=str, default="models/RMBG/INSPYRENET/inspyrenet.safetensors", 
+        help="Path to background removal model"
+    )
+    parser.add_argument(
+        "--bg-threshold", type=float, default=0.5, 
+        help="Background removal threshold (0.0-1.0, default: 0.5)"
+    )
+    parser.add_argument(
+        "--bg-use-jit", action="store_true", 
+        help="Use PyTorch JIT for faster inference"
+    )
 
     args = parser.parse_args()
 
@@ -850,6 +1029,10 @@ def main():
                 "force_offload": True,
                 "file_format": "glb",
                 "save_file": True,
+                **({"remove_background": args.remove_background} if args.remove_background else {}),
+                **({"bg_model_path": args.bg_model_path} if args.bg_model_path != parser.get_default("bg_model_path") else {}),
+                **({"bg_threshold": args.bg_threshold} if args.bg_threshold != parser.get_default("bg_threshold") else {}),
+                **({"bg_use_jit": args.bg_use_jit} if args.bg_use_jit else {}),
             }
             results = workflow.run_workflow(**config)
 
@@ -878,6 +1061,10 @@ def main():
                 diffusion_model_name=args.diffusion_model,
                 input_image_path=args.input_image,
                 output_mesh_name=args.output_name,
+                **({"remove_background": args.remove_background} if args.remove_background else {}),
+                **({"bg_model_path": args.bg_model_path} if args.bg_model_path != parser.get_default("bg_model_path") else {}),
+                **({"bg_threshold": args.bg_threshold} if args.bg_threshold != parser.get_default("bg_threshold") else {}),
+                **({"bg_use_jit": args.bg_use_jit} if args.bg_use_jit else {}),
             )
             print("\nComplete workflow finished!")
             print(f"Final textured mesh: {results['final_mesh_path']}")
@@ -915,6 +1102,12 @@ def main():
                 input_image_path=args.input_image,
                 output_mesh_name=args.output_name,
                 texture_params=default_texture_params,  # Pass texture params with camera configs
+                **({"remove_background": args.remove_background} if args.remove_background else {}),
+                **({"bg_model_path": args.bg_model_path} if args.bg_model_path != parser.get_default("bg_model_path") else {}),
+                bg_params={
+                    "threshold": args.bg_threshold,
+                    "use_jit": args.bg_use_jit,
+                },
             )
             print("\nEnhanced workflow finished!")
             print(f"Final textured mesh: {results['final_mesh_path']}")
