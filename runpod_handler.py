@@ -2,7 +2,7 @@
 RunPod Serverless Handler for Hunyuan 3D 2.1 Workflow
 =====================================================
 
-This module implements an async RunPod serverless handler for the Hunyuan 3D 2.1 workflow.
+This module implements a synchronous RunPod serverless handler for the Hunyuan 3D 2.1 workflow.
 It supports mesh generation, texture generation, and enhanced workflows.
 
 SUPPORTED WORKFLOWS:
@@ -87,7 +87,6 @@ ENVIRONMENT REQUIREMENTS:
 - RunPod SDK: pip install runpod
 """
 
-import asyncio
 import base64
 import io
 import json
@@ -95,7 +94,7 @@ import os
 import time
 import traceback
 from pathlib import Path
-from typing import Dict, Any, AsyncGenerator, Union
+from typing import Dict, Any, Union
 
 import runpod
 from PIL import Image
@@ -146,8 +145,20 @@ class RunPodHunyuan3DHandler:
             self.enhanced_workflow = EnhancedHunyuan3DWorkflow()
 
     def _decode_base64_image(self, base64_data: str) -> Image.Image:
-        """Decode base64 image data to PIL Image"""
+        """Decode base64 image data to PIL Image, or load from file path"""
         try:
+            # Check if it's a file path
+            if not base64_data.startswith("data:image") and not base64_data.startswith("iVBOR"):
+                # Assume it's a file path
+                if os.path.exists(base64_data):
+                    print(f"📁 Loading image from file: {base64_data}")
+                    image = Image.open(base64_data).convert("RGB")
+                    print(f"📷 Image loaded: {image.size} pixels")
+                    return image
+                else:
+                    raise ValueError(f"File not found: {base64_data}")
+
+            # Handle base64 data
             # Remove data URL prefix if present
             if base64_data.startswith("data:image"):
                 base64_data = base64_data.split(",")[1]
@@ -156,17 +167,24 @@ class RunPodHunyuan3DHandler:
             image_data = base64.b64decode(base64_data)
             image = Image.open(io.BytesIO(image_data)).convert("RGB")
 
-            print(f"📷 Image decoded: {image.size} pixels")
+            print(f"📷 Image decoded from base64: {image.size} pixels")
             return image
 
         except Exception as e:
-            raise ValueError(f"Failed to decode base64 image: {str(e)}")
+            raise ValueError(f"Failed to decode/load image: {str(e)}")
 
     def _save_image_temporarily(
         self, image: Image.Image, name: str = "temp_input"
     ) -> str:
         """Save PIL Image temporarily for processing"""
-        temp_path = f"/tmp/{name}.png"
+        # Use Windows-compatible temp directory
+        import tempfile
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, f"{name}.png")
+
+        # Ensure temp directory exists
+        os.makedirs(temp_dir, exist_ok=True)
+
         image.save(temp_path)
         return temp_path
 
@@ -248,8 +266,8 @@ class RunPodHunyuan3DHandler:
             "target_face_count": 15000,
         }
 
-    async def _run_mesh_workflow(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Run mesh generation workflow"""
+    def _run_mesh_workflow_sync(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Run mesh generation workflow synchronously"""
         print("🔵 Starting mesh generation workflow...")
 
         # Initialize workflow
@@ -268,19 +286,16 @@ class RunPodHunyuan3DHandler:
         if self.mesh_workflow is None:
             raise RuntimeError("Mesh workflow not initialized")
 
-        # Run workflow
-        results = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: self.mesh_workflow.run_workflow(
-                vae_model_name=params["vae_model"],
-                diffusion_model_name=params["diffusion_model"],
-                input_image_path=temp_image_path,
-                output_mesh_name=params["output_name"],
-                remove_background=params["remove_background"],
-                bg_threshold=params["bg_threshold"],
-                bg_use_jit=params["bg_use_jit"],
-                **mesh_params,
-            ),
+        # Run workflow synchronously
+        results = self.mesh_workflow.run_workflow(
+            vae_model_name=params["vae_model"],
+            diffusion_model_name=params["diffusion_model"],
+            input_image_path=temp_image_path,
+            output_mesh_name=params["output_name"],
+            remove_background=params["remove_background"],
+            bg_threshold=params["bg_threshold"],
+            bg_use_jit=params["bg_use_jit"],
+            **mesh_params,
         )
 
         # Clean up temporary file
@@ -304,8 +319,8 @@ class RunPodHunyuan3DHandler:
             "vram_optimized": results.get("vram_optimized", True),
         }
 
-    async def _run_enhanced_workflow(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Run enhanced workflow (mesh + texture + decimation)"""
+    def _run_enhanced_workflow_sync(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Run enhanced workflow synchronously"""
         print("🟢 Starting enhanced workflow...")
 
         # Initialize workflow
@@ -330,23 +345,20 @@ class RunPodHunyuan3DHandler:
         if self.enhanced_workflow is None:
             raise RuntimeError("Enhanced workflow not initialized")
 
-        # Run enhanced workflow
-        results = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: self.enhanced_workflow.run_enhanced_workflow(
-                vae_model_name=params["vae_model"],
-                diffusion_model_name=params["diffusion_model"],
-                input_image_path=temp_image_path,
-                output_mesh_name=params["output_name"],
-                mesh_params=mesh_params,
-                texture_params=texture_params,
-                remove_background=params["remove_background"],
-                bg_params={
-                    "threshold": params["bg_threshold"],
-                    "use_jit": params["bg_use_jit"],
-                },
-                **decimation_params,
-            ),
+        # Run enhanced workflow synchronously
+        results = self.enhanced_workflow.run_enhanced_workflow(
+            vae_model_name=params["vae_model"],
+            diffusion_model_name=params["diffusion_model"],
+            input_image_path=temp_image_path,
+            output_mesh_name=params["output_name"],
+            mesh_params=mesh_params,
+            texture_params=texture_params,
+            remove_background=params["remove_background"],
+            bg_params={
+                "threshold": params["bg_threshold"],
+                "use_jit": params["bg_use_jit"],
+            },
+            **decimation_params,
         )
 
         # Clean up temporary file
@@ -390,10 +402,8 @@ class RunPodHunyuan3DHandler:
             },
         }
 
-    async def process_job(
-        self, job_input: Dict[str, Any]
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Process a job asynchronously with progress updates"""
+    def process_job_sync(self, job_input: Dict[str, Any]) -> Dict[str, Any]:
+        """Process a job synchronously"""
         start_time = time.time()
 
         try:
@@ -403,39 +413,25 @@ class RunPodHunyuan3DHandler:
 
             results = {}
 
-            yield {
-                "status": "processing",
-                "progress": 0,
-                "message": f"Starting {workflow_type} workflow...",
-                "workflow_type": workflow_type,
-            }
+            print(f"Starting {workflow_type} workflow...")
 
             # Memory cleanup before starting
             cleanup_memory()
 
             # Run appropriate workflow
             if workflow_type == "mesh":
-                yield {
-                    "status": "processing",
-                    "progress": 10,
-                    "message": "Generating 3D mesh from image...",
-                }
-                results = await self._run_mesh_workflow(params)
+                print("Generating 3D mesh from image...")
+                results = self._run_mesh_workflow_sync(params)
 
             elif workflow_type == "enhanced":
-                yield {
-                    "status": "processing",
-                    "progress": 10,
-                    "message": "Starting enhanced workflow (mesh + texture)...",
-                }
-                results = await self._run_enhanced_workflow(params)
+                print("Starting enhanced workflow (mesh + texture)...")
+                results = self._run_enhanced_workflow_sync(params)
 
             elif workflow_type == "texture":
-                yield {
+                return {
                     "status": "error",
                     "message": "Texture-only workflow not yet implemented for serverless. Use 'enhanced' workflow instead.",
                 }
-                return
 
             # Final cleanup
             cleanup_memory()
@@ -449,13 +445,8 @@ class RunPodHunyuan3DHandler:
                 **results,
             }
 
-            yield {
-                "status": "processing",
-                "progress": 100,
-                "message": "Processing complete!",
-            }
-
-            yield final_result
+            print("Processing complete!")
+            return final_result
 
         except Exception as e:
             error_message = str(e)
@@ -464,7 +455,7 @@ class RunPodHunyuan3DHandler:
             print(f"❌ Error processing job: {error_message}")
             print(f"Traceback: {error_traceback}")
 
-            yield {
+            return {
                 "status": "error",
                 "error": error_message,
                 "traceback": error_traceback,
@@ -476,15 +467,15 @@ class RunPodHunyuan3DHandler:
 handler_instance = RunPodHunyuan3DHandler()
 
 
-async def runpod_handler(job: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
+def runpod_handler_sync(job: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Main RunPod async handler function
+    Main RunPod synchronous handler function
 
     Args:
         job: RunPod job dictionary containing 'id' and 'input' fields
 
-    Yields:
-        Progress updates and final results
+    Returns:
+        Final result dictionary
     """
     job_id = job.get("id", "unknown")
     job_input = job.get("input", {})
@@ -492,46 +483,269 @@ async def runpod_handler(job: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], 
     print(f"🎯 Processing RunPod job {job_id}")
     print(f"📝 Input: {json.dumps(job_input, indent=2)}")
 
-    # Process the job and yield results
-    async for result in handler_instance.process_job(job_input):
-        yield result
+    # Process the job synchronously
+    return handler_instance.process_job_sync(job_input)
 
+
+# ASYNC VERSION (commented out for now)
+# async def runpod_handler(job: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
+#     """
+#     Main RunPod async handler function
+#
+#     Args:
+#         job: RunPod job dictionary containing 'id' and 'input' fields
+#
+#     Yields:
+#         Progress updates and final results
+#     """
+#     job_id = job.get("id", "unknown")
+#     job_input = job.get("input", {})
+#
+#     print(f"🎯 Processing RunPod job {job_id}")
+#     print(f"📝 Input: {json.dumps(job_input, indent=2)}")
+#
+#     # Process the job and yield results
+#     async for result in handler_instance.process_job(job_input):
+#         yield result
 
 # Test function for local development
 def test_handler_locally():
-    """Test the handler locally with sample input"""
+    """Test the handler locally with sample input from test_input.json"""
+    import json
+
+    print("🧪 Running local test with test_input.json...")
+
+    try:
+        with open('test_input.json', 'r') as f:
+            test_data = json.load(f)
+    except Exception as e:
+        print(f"❌ Failed to load test_input.json: {e}")
+        return
+
+    result = runpod_handler_sync(test_data)
+    print(f"📤 Result: {json.dumps(result, indent=2)}")
+
+
+# Test function with hardcoded minimal data (for quick validation)
+def test_handler_locally_minimal():
+    """Test the handler locally with minimal hardcoded input"""
 
     test_input = {
-        "id": "test_job_123",
+        "id": "test_job_minimal",
         "input": {
             "workflow": "mesh",
-            "input_image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",  # 1x1 red pixel
-            "output_name": "test_mesh",
+            "input_image": "assets/mune.png",  # Use file path
+            "output_name": "test_mesh_minimal",
             "remove_background": False,
             "mesh_params": {"steps": 5, "max_facenum": 1000},  # Reduced for testing
         },
     }
 
-    async def run_test():
-        print("🧪 Running local test...")
-        async for result in runpod_handler(test_input):
-            print(f"📤 Result: {json.dumps(result, indent=2)}")
+    print("🧪 Running minimal local test...")
+    result = runpod_handler_sync(test_input)
+    print(f"📤 Result: {json.dumps(result, indent=2)}")
 
-    asyncio.run(run_test())
 
+# Test function with validation only (no actual processing)
+def test_handler_validation():
+    """Test the handler validation without running the actual workflow"""
+
+    test_input = {
+        "id": "test_job_validation",
+        "input": {
+            "workflow": "mesh",
+            "input_image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+            "output_name": "test_validation",
+            "remove_background": False,
+        },
+    }
+
+    print("🧪 Running validation test...")
+    handler = RunPodHunyuan3DHandler()
+
+    # Test input validation
+    try:
+        params = handler._validate_input(test_input["input"])
+        print("✅ Input validation passed")
+        print(f"📝 Validated params: {json.dumps(params, indent=2)}")
+
+        # Test image decoding
+        image = handler._decode_base64_image(params["input_image"])
+        print(f"✅ Image decoding passed: {image.size} pixels")
+
+        print("🎉 All validation tests passed!")
+
+    except Exception as e:
+        print(f"❌ Validation failed: {str(e)}")
+        return False
+
+    return True
+
+
+# Test function for image decoding only
+def test_image_decoding():
+    """Test image decoding and saving functionality"""
+    import json
+
+    print("🧪 Testing image decoding functionality...")
+
+    # Load test input
+    try:
+        with open('test_input.json', 'r') as f:
+            test_data = json.load(f)
+    except Exception as e:
+        print(f"❌ Failed to load test_input.json: {e}")
+        return False
+
+    base64_image = test_data['input']['input_image']
+    print(f"📝 Base64 image length: {len(base64_image)} characters")
+
+    # Initialize handler
+    handler = RunPodHunyuan3DHandler()
+
+    try:
+        # Test image decoding
+        print("🔄 Decoding base64 image...")
+        image = handler._decode_base64_image(base64_image)
+        print(f"✅ Image decoded successfully: {image.size} pixels, mode: {image.mode}")
+
+        # Test image saving
+        print("💾 Testing image saving...")
+        temp_path = handler._save_image_temporarily(image, "test_decoding")
+        print(f"✅ Image saved to: {temp_path}")
+
+        # Verify saved image
+        if os.path.exists(temp_path):
+            print("✅ Temporary file exists")
+            file_size = os.path.getsize(temp_path)
+            print(f"📊 File size: {file_size} bytes")
+
+            # Try to reload the saved image
+            try:
+                saved_image = Image.open(temp_path)
+                print(f"✅ Saved image reloaded: {saved_image.size} pixels, mode: {saved_image.mode}")
+
+                # Clean up
+                os.remove(temp_path)
+                print("🧹 Cleaned up temporary file")
+
+                return True
+
+            except Exception as e:
+                print(f"❌ Failed to reload saved image: {e}")
+                return False
+        else:
+            print("❌ Temporary file was not created")
+            return False
+
+    except Exception as e:
+        print(f"❌ Image decoding test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+# Test function with file path input (alternative to base64)
+def test_file_input():
+    """Test with file path input instead of base64"""
+    print("🧪 Testing file path input...")
+
+    # Use the assets/mune.png file
+    image_path = "assets/mune.png"
+
+    if not os.path.exists(image_path):
+        print(f"❌ Test image not found: {image_path}")
+        return False
+
+    try:
+        # Load image directly
+        image = Image.open(image_path).convert("RGB")
+        print(f"✅ Image loaded: {image.size} pixels, mode: {image.mode}")
+
+        # Test saving
+        handler = RunPodHunyuan3DHandler()
+        temp_path = handler._save_image_temporarily(image, "test_file")
+        print(f"✅ Image saved to: {temp_path}")
+
+        # Clean up
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+            print("🧹 Cleaned up temporary file")
+
+        return True
+
+    except Exception as e:
+        print(f"❌ File input test failed: {e}")
+        return False
+
+
+# ASYNC TEST VERSION (commented out)
+# def test_handler_locally_async():
+#     """Test the handler locally with sample input (async version)"""
+#
+#     test_input = {
+#         "id": "test_job_123",
+#         "input": {
+#             "workflow": "mesh",
+#             "input_image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",  # 1x1 red pixel
+#             "output_name": "test_mesh",
+#             "remove_background": False,
+#             "mesh_params": {"steps": 5, "max_facenum": 1000},  # Reduced for testing
+#         },
+#     }
+#
+#     async def run_test():
+#         print("🧪 Running local test...")
+#         async for result in runpod_handler(test_input):
+#             print(f"📤 Result: {json.dumps(result, indent=2)}")
+#
+#     asyncio.run(run_test())
 
 if __name__ == "__main__":
     import sys
 
-    if len(sys.argv) > 1 and sys.argv[1] == "--test":
-        # Run local test
-        test_handler_locally()
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--test":
+            # Run local test with test_input.json
+            test_handler_locally()
+        elif sys.argv[1] == "--test-minimal":
+            # Run minimal test with hardcoded data
+            test_handler_locally_minimal()
+        elif sys.argv[1] == "--validate":
+            # Run validation test only
+            test_handler_validation()
+        elif sys.argv[1] == "--test-image":
+            # Test image decoding only
+            test_image_decoding()
+        elif sys.argv[1] == "--test-file":
+            # Test file input
+            test_file_input()
+        else:
+            print("Usage: python runpod_handler.py [--test|--test-minimal|--validate|--test-image|--test-file]")
     else:
-        # Start RunPod serverless
-        print("🚀 Starting RunPod Serverless Handler for Hunyuan 3D 2.1")
+        # Start RunPod serverless with synchronous handler
+        print("🚀 Starting RunPod Serverless Handler for Hunyuan 3D 2.1 (Synchronous)")
         runpod.serverless.start(
             {
-                "handler": runpod_handler,
+                "handler": runpod_handler_sync,
                 "return_aggregate_stream": True,  # Make results available via /run endpoint
             }
         )
+
+
+# ASYNC MAIN BLOCK (commented out for now)
+# if __name__ == "__main__":
+#     import sys
+#
+#     if len(sys.argv) > 1 and sys.argv[1] == "--test":
+#         # Run local test
+#         test_handler_locally()
+#     else:
+#         # Start RunPod serverless
+#         print("🚀 Starting RunPod Serverless Handler for Hunyuan 3D 2.1")
+#         runpod.serverless.start(
+#             {
+#                 "handler": runpod_handler,
+#                 "return_aggregate_stream": True,  # Make results available via /run endpoint
+#             }
+#         )
