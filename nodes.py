@@ -956,7 +956,10 @@ class Hy3D21ExportMesh:
             trimesh.export(temp_file, file_type=file_format)
             relative_path = Path(subfolder) / f"hy3dtemp_.{file_format}"
 
-        return (str(relative_path),)
+        output_directory = folder_paths.get_output_directory()
+        full_relative_path = Path(output_directory, relative_path)
+
+        return (str(full_relative_path),)
 
 
 class Hy3D21MeshUVWrap:
