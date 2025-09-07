@@ -6,7 +6,7 @@
         "output_name": "test_enhanced_mesh",
         "vae_model": "model.fp16.ckpt",
         "diffusion_model": "model.fp16.ckpt",
-        "remove_background": true,
+        "remove_background": false,
         "bg_threshold": 0.5,
         "bg_use_jit": false,
         "mesh_params": {
@@ -35,5 +35,6 @@
             "enable_decimation": false,
             "target_face_count": 15000
         }
-    }
+    },
+    "upload_to_r2": true
 }

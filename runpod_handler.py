@@ -57,7 +57,8 @@ INPUT FORMAT:
     "decimation_params": {
         "enable_decimation": false,
         "target_face_count": 15000
-    }
+    },
+    "upload_to_r2": true # Upload to r2 or not (Always keep true)
 }
 
 OUTPUT FORMAT:
