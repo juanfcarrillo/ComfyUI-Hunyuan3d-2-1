@@ -189,17 +189,21 @@ class RunPodHunyuan3DHandler:
 
     def _decode_base64_image(self, base64_data: str) -> Image.Image:
         """Decode base64 image data to PIL Image, or load from file path
-        
+
         Supports all common image formats including PNG, JPEG, JPG, GIF, BMP, TIFF, WEBP, etc.
         """
         try:
             # Check if it's a file path (not a base64 string)
-            if not base64_data.startswith("data:image") and not self._is_base64_string(base64_data):
+            if not base64_data.startswith("data:image") and not self._is_base64_string(
+                base64_data
+            ):
                 # Assume it's a file path
                 if os.path.exists(base64_data):
                     print(f"📁 Loading image from file: {base64_data}")
                     image = Image.open(base64_data).convert("RGB")
-                    print(f"📷 Image loaded: {image.size} pixels, format: {image.format}")
+                    print(
+                        f"📷 Image loaded: {image.size} pixels, format: {image.format}"
+                    )
                     return image
                 else:
                     raise ValueError(f"File not found: {base64_data}")
@@ -212,14 +216,16 @@ class RunPodHunyuan3DHandler:
             # Decode base64 data
             image_data = base64.b64decode(base64_data)
             image = Image.open(io.BytesIO(image_data))
-            
+
             # Get original format info before converting
             original_format = image.format or "Unknown"
-            
+
             # Convert to RGB (handles all formats including RGBA, grayscale, etc.)
             image = image.convert("RGB")
 
-            print(f"📷 Image decoded from base64: {image.size} pixels, original format: {original_format}")
+            print(
+                f"📷 Image decoded from base64: {image.size} pixels, original format: {original_format}"
+            )
             return image
 
         except Exception as e:
@@ -231,32 +237,33 @@ class RunPodHunyuan3DHandler:
             # Check basic length requirement
             if len(s) < 50:
                 return False
-            
+
             # Check if string contains only valid base64 characters
             import re
-            if not re.match(r'^[A-Za-z0-9+/]*={0,2}$', s):
+
+            if not re.match(r"^[A-Za-z0-9+/]*={0,2}$", s):
                 return False
-            
+
             # Try to decode - if it fails, it's not base64
             base64.b64decode(s, validate=True)
-            
+
             # Special check for common file path patterns that would never be base64
             # Look for file extensions in the last few characters
-            if re.search(r'\.[a-zA-Z]{2,4}$', s):  # ends with .ext
+            if re.search(r"\.[a-zA-Z]{2,4}$", s):  # ends with .ext
                 return False
-            
+
             # Look for drive letters or common path patterns
-            if re.match(r'^[A-Za-z]:[/\\]', s):  # Windows drive letter
+            if re.match(r"^[A-Za-z]:[/\\]", s):  # Windows drive letter
                 return False
-            
+
             # If it starts with a path separator and has spaces or common path chars, it's a path
-            if s.startswith('/') and (' ' in s or len(s) < 200):
+            if s.startswith("/") and (" " in s or len(s) < 200):
                 # But JPEG base64 often starts with /9j/ so check for that pattern
-                if not s.startswith('/9j/'):
+                if not s.startswith("/9j/"):
                     return False
-                
+
             return True
-                
+
         except Exception:
             return False
 
@@ -264,7 +271,7 @@ class RunPodHunyuan3DHandler:
         self, image: Image.Image, name: str = "temp_input"
     ) -> str:
         """Save PIL Image temporarily for processing
-        
+
         Always saves as PNG for consistency, regardless of original format
         """
         # Use cross-platform temp directory
