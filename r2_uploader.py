@@ -38,6 +38,7 @@ class R2Uploader:
         self.access_key_id = os.getenv("R2_ACCESS_KEY_ID")
         self.secret_access_key = os.getenv("R2_SECRET_ACCESS_KEY")
         self.bucket_name = os.getenv("R2_BUCKET_NAME")
+        self.public_url = os.getenv("R2_PUBLIC_URL")
 
         # Validate required environment variables
         required_vars = {
@@ -180,7 +181,7 @@ class R2Uploader:
     def _get_public_url(self, remote_key: str) -> str:
         """Generate public URL for the uploaded file"""
         # Use default R2 public URL format
-        return f"https://pub-{self.bucket_name}.r2.dev/{remote_key}"
+        return f"{self.public_url}/{remote_key}"
 
     def upload_multiple_files(
         self,

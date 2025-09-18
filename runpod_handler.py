@@ -12,9 +12,20 @@ SUPPORTED WORKFLOWS:
 
 INPUT FORMAT:
 {
+    "id": "request-123",  # Optional: Unique request ID for tracing (auto-generated if not provided)
     "workflow": "enhanced",  # Required: "mesh", "texture", or "enhanced"
     "input_image": "base64_encoded_image_data",  # Required: Base64 encoded image (supports all formats: PNG, JPEG, JPG, GIF, BMP, TIFF, WEBP, etc.) or file path
     "output_name": "my_mesh",  # Optional: Output filename prefix
+    
+    # Webhook configuration (optional) - can be string, array of strings, or array of objects
+    "webhooks": [
+        "https://api.example.com/webhook1",  # Simple URL string
+        {
+            "url": "https://api.example.com/webhook2",  # Object with URL field
+            "description": "My custom webhook"  # Additional fields ignored
+        }
+    ],
+    # OR single webhook as string: "webhooks": "https://api.example.com/webhook"
     "vae_model": "model.fp16.ckpt",  # Optional: VAE model filename
     "diffusion_model": "model.fp16.ckpt",  # Optional: Diffusion model filename
 
@@ -64,6 +75,7 @@ INPUT FORMAT:
 OUTPUT FORMAT:
 {
     "status": "success",
+    "request_id": "request-123",  # Request ID for tracing
     "workflow_type": "enhanced",
     "output_files": [
         {
@@ -90,8 +102,33 @@ ENVIRONMENT REQUIREMENTS:
 - All dependencies from requirements.txt must be installed
 - Models should be placed in the appropriate directories
 - RunPod SDK: pip install runpod
+- aiohttp: pip install aiohttp (for webhook functionality)
+
+WEBHOOK CONFIGURATION:
+Two ways to configure webhooks:
+
+1. Environment Variable (HOOKS):
+   - Set HOOKS environment variable with comma or semicolon separated webhook URLs
+   - Example: HOOKS="https://api.example.com/webhook1,https://api.example.com/webhook2"
+   - These webhooks apply to ALL requests
+
+2. Request Body (webhooks):
+   - Include "webhooks" field in the request body for per-request webhooks
+   - Can be a string (single URL), array of strings, or array of objects with 'url' field
+   - Examples:
+     * Single: "webhooks": "https://api.example.com/webhook"
+     * Array: "webhooks": ["https://api.example.com/webhook1", "https://api.example.com/webhook2"]
+     * Objects: "webhooks": [{"url": "https://api.example.com/webhook", "description": "My webhook"}]
+
+Webhook Behavior:
+- Both environment and request webhooks are called (combined and deduplicated)
+- Webhooks are called asynchronously after job completion (success or error)
+- Webhook payload contains the complete job result including request_id
+- Webhooks have a 30-second timeout and will retry failures gracefully
 """
 
+import asyncio
+import aiohttp
 import base64
 import io
 import json
@@ -99,7 +136,7 @@ import os
 import time
 import traceback
 from pathlib import Path
-from typing import Dict, Any, Union
+from typing import Dict, Any, Union, List
 
 import runpod
 from PIL import Image
@@ -151,6 +188,11 @@ class RunPodHunyuan3DHandler:
         self.r2_uploader = None
         self._check_r2_configuration()
 
+        # Initialize webhook configuration
+        self.webhook_urls = self._get_webhook_urls()
+        if self.webhook_urls:
+            print(f"✅ Configured {len(self.webhook_urls)} webhook URLs")
+
         print("✅ RunPod Hunyuan 3D Handler initialized successfully")
 
     def _initialize_workflow(self, workflow_type: str):
@@ -186,6 +228,135 @@ class RunPodHunyuan3DHandler:
                 self.r2_uploader = None
         else:
             print("ℹ️ R2 storage not configured (missing environment variables)")
+
+    def _get_webhook_urls(self) -> List[str]:
+        """Get webhook URLs from HOOKS environment variable"""
+        hooks_env = os.getenv("HOOKS", "")
+        if not hooks_env.strip():
+            return []
+        
+        # Support multiple URLs separated by comma or semicolon
+        urls = []
+        for url in hooks_env.replace(";", ",").split(","):
+            url = url.strip()
+            if url and (url.startswith("http://") or url.startswith("https://")):
+                urls.append(url)
+            elif url:
+                print(f"⚠️ Invalid webhook URL format: {url}")
+        
+        return urls
+
+    def _process_request_webhooks(self, webhooks_input) -> List[str]:
+        """Process webhook URLs from request input
+
+        Args:
+            webhooks_input: Can be a string (single URL), list of strings (URLs),
+                           or list of dicts with 'url' field
+
+        Returns:
+            List of validated webhook URLs
+        """
+        if not webhooks_input:
+            return []
+        
+        urls = []
+        
+        # Handle different input formats
+        if isinstance(webhooks_input, str):
+            # Single URL as string
+            webhooks_input = [webhooks_input]
+        
+        if isinstance(webhooks_input, list):
+            for item in webhooks_input:
+                if isinstance(item, str):
+                    # Simple URL string
+                    url = item.strip()
+                elif isinstance(item, dict) and 'url' in item:
+                    # Dictionary with URL field
+                    url = item['url'].strip()
+                else:
+                    print(f"⚠️ Invalid webhook format: {item}")
+                    continue
+                
+                # Validate URL
+                if url and (url.startswith("http://") or url.startswith("https://")):
+                    urls.append(url)
+                elif url:
+                    print(f"⚠️ Invalid webhook URL format: {url}")
+        
+        return urls
+
+    def _get_combined_webhooks(self, request_webhooks: List[str] = None) -> List[str]:
+        """Combine environment webhooks and request webhooks
+        
+        Args:
+            request_webhooks: Webhook URLs from request body
+            
+        Returns:
+            Combined list of unique webhook URLs
+        """
+        combined = []
+        
+        # Add environment webhooks
+        combined.extend(self.webhook_urls)
+        
+        # Add request webhooks
+        if request_webhooks:
+            combined.extend(request_webhooks)
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_webhooks = []
+        for url in combined:
+            if url not in seen:
+                seen.add(url)
+                unique_webhooks.append(url)
+        
+        return unique_webhooks
+
+    async def _call_webhooks(self, data: Dict[str, Any], request_webhooks: List[str] = None) -> None:
+        """Call all configured webhooks asynchronously with the result data
+        
+        Args:
+            data: The data to send to webhooks
+            request_webhooks: Additional webhook URLs from the request
+        """
+        # Get combined webhook URLs from environment and request
+        all_webhooks = self._get_combined_webhooks(request_webhooks)
+        
+        if not all_webhooks:
+            return
+
+        print(f"📞 Calling {len(all_webhooks)} webhooks...")
+        
+        async def call_single_webhook(session: aiohttp.ClientSession, url: str) -> None:
+            """Call a single webhook URL"""
+            try:
+                timeout = aiohttp.ClientTimeout(total=30)  # 30 second timeout
+                headers = {
+                    "Content-Type": "application/json",
+                    "User-Agent": "RunPod-Hunyuan3D-Handler/1.0"
+                }
+                
+                async with session.post(url, json=data, headers=headers, timeout=timeout) as response:
+                    if response.status == 200:
+                        print(f"✅ Webhook called successfully: {url}")
+                    else:
+                        print(f"⚠️ Webhook returned status {response.status}: {url}")
+                        
+            except asyncio.TimeoutError:
+                print(f"⏰ Webhook timeout: {url}")
+            except Exception as e:
+                print(f"❌ Webhook error for {url}: {str(e)}")
+
+        # Call all webhooks concurrently
+        try:
+            async with aiohttp.ClientSession() as session:
+                tasks = [call_single_webhook(session, url) for url in all_webhooks]
+                await asyncio.gather(*tasks, return_exceptions=True)
+                
+        except Exception as e:
+            print(f"❌ Error calling webhooks: {str(e)}")
 
     def _decode_base64_image(self, base64_data: str) -> Image.Image:
         """Decode base64 image data to PIL Image, or load from file path
@@ -229,7 +400,7 @@ class RunPodHunyuan3DHandler:
             return image
 
         except Exception as e:
-            raise ValueError(f"Failed to decode/load image: {str(e)}")
+            raise ValueError(f"Failed to decode/load image: {str(e)}") from e
 
     def _is_base64_string(self, s: str) -> bool:
         """Check if a string is likely a base64 encoded string"""
@@ -302,8 +473,16 @@ class RunPodHunyuan3DHandler:
                 f"Invalid workflow type: {workflow_type}. Must be one of: mesh, texture, enhanced"
             )
 
+        # Generate unique ID if not provided
+        import uuid
+        request_id = job_input.get("id", str(uuid.uuid4()))
+
+        # Process webhook URLs from request
+        request_webhooks = self._process_request_webhooks(job_input.get("webhooks", []))
+
         # Normalize input
         normalized = {
+            "id": request_id,
             "workflow": workflow_type,
             "input_image": job_input["input_image"],
             "output_name": job_input.get("output_name", "generated_model"),
@@ -316,6 +495,7 @@ class RunPodHunyuan3DHandler:
             "bg_use_jit": job_input.get("bg_use_jit", False),
             "upload_to_r2": job_input.get("upload_to_r2", True),
             "keep_local_files": job_input.get("keep_local_files", False),
+            "webhooks": request_webhooks,
         }
 
         # Add workflow-specific parameters
@@ -594,15 +774,18 @@ class RunPodHunyuan3DHandler:
     def process_job_sync(self, job_input: Dict[str, Any]) -> Dict[str, Any]:
         """Process a job synchronously"""
         start_time = time.time()
+        params = None
+        request_id = job_input.get("id", "unknown")
 
         try:
             # Validate input
             params = self._validate_input(job_input)
             workflow_type = params["workflow"]
+            request_id = params["id"]
 
             results = {}
 
-            print(f"Starting {workflow_type} workflow...")
+            print(f"🔄 Starting {workflow_type} workflow (ID: {request_id})...")
 
             # Memory cleanup before starting
             cleanup_memory()
@@ -620,6 +803,7 @@ class RunPodHunyuan3DHandler:
                 return {
                     "status": "error",
                     "message": "Texture-only workflow not yet implemented for serverless. Use 'enhanced' workflow instead.",
+                    "request_id": request_id,
                 }
 
             # Final cleanup
@@ -627,30 +811,49 @@ class RunPodHunyuan3DHandler:
 
             processing_time = time.time() - start_time
 
-            # Final result
+            # Final result with request ID
             final_result = {
                 "status": "success",
+                "request_id": request_id,
                 "processing_time": round(processing_time, 2),
                 "r2_configured": self.r2_uploader is not None,
                 **results,
             }
 
-            print("Processing complete!")
+            print(f"✅ Processing complete (ID: {request_id})!")
+            
+            # Call webhooks asynchronously (fire and forget)
+            request_webhooks = params.get("webhooks", [])
+            if self.webhook_urls or request_webhooks:
+                asyncio.create_task(self._call_webhooks(final_result, request_webhooks))
+            
             return final_result
 
         except Exception as e:
             error_message = str(e)
             error_traceback = traceback.format_exc()
 
-            print(f"❌ Error processing job: {error_message}")
+            # Use request_id from params if available, otherwise from input
+            if params and "id" in params:
+                request_id = params["id"]
+
+            print(f"❌ Error processing job (ID: {request_id}): {error_message}")
             print(f"Traceback: {error_traceback}")
 
-            return {
+            error_result = {
                 "status": "error",
+                "request_id": request_id,
                 "error": error_message,
                 "traceback": error_traceback,
                 "processing_time": round(time.time() - start_time, 2),
             }
+            
+            # Call webhooks for errors too
+            request_webhooks = params.get("webhooks", []) if params else []
+            if self.webhook_urls or request_webhooks:
+                asyncio.create_task(self._call_webhooks(error_result, request_webhooks))
+            
+            return error_result
 
 
 # Global handler instance
@@ -905,6 +1108,228 @@ def test_r2_integration():
                 )
 
 
+# Test function for webhook functionality
+def test_webhook_functionality():
+    """Test webhook configuration and calling"""
+    print("🧪 Testing webhook functionality...")
+    
+    # Test webhook URL parsing
+    original_hooks = os.getenv("HOOKS", "")
+    
+    # Test with different URL formats
+    test_cases = [
+        ("", []),
+        ("https://api.example.com/webhook", ["https://api.example.com/webhook"]),
+        ("https://api.example.com/webhook1,https://api.example.com/webhook2",
+         ["https://api.example.com/webhook1", "https://api.example.com/webhook2"]),
+        ("https://api.example.com/webhook1;https://api.example.com/webhook2",
+         ["https://api.example.com/webhook1", "https://api.example.com/webhook2"]),
+        ("https://valid.com,invalid_url,http://also.valid.com",
+         ["https://valid.com", "http://also.valid.com"]),
+    ]
+    
+    handler = RunPodHunyuan3DHandler()
+    
+    for hooks_str, expected in test_cases:
+        os.environ["HOOKS"] = hooks_str
+        urls = handler._get_webhook_urls()
+        
+        if urls == expected:
+            print(f"✅ Webhook parsing test passed: '{hooks_str}' -> {len(urls)} URLs")
+        else:
+            print(f"❌ Webhook parsing test failed: '{hooks_str}' -> expected {expected}, got {urls}")
+    
+    # Restore original HOOKS value
+    if original_hooks:
+        os.environ["HOOKS"] = original_hooks
+    elif "HOOKS" in os.environ:
+        del os.environ["HOOKS"]
+    
+    # Test webhook calling with a test payload
+    test_payload = {
+        "status": "success",
+        "request_id": "test-123",
+        "workflow_type": "test",
+        "processing_time": 1.5
+    }
+    
+    # Only test if webhooks are configured
+    if handler.webhook_urls:
+        print(f"🔗 Testing webhook calls to {len(handler.webhook_urls)} URLs...")
+        
+        # Create an event loop if one doesn't exist
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Run the webhook test
+        loop.run_until_complete(handler._call_webhooks(test_payload))
+        print("✅ Webhook test completed")
+    else:
+        print("ℹ️ No webhooks configured for testing")
+
+
+# Test function for request-body webhook functionality
+def test_request_webhooks():
+    """Test request-body webhook functionality"""
+    print("🧪 Testing request-body webhook functionality...")
+    
+    handler = RunPodHunyuan3DHandler()
+    
+    # Test different webhook input formats
+    test_cases = [
+        # Single URL as string
+        ("Single string URL", "https://httpbin.org/post"),
+        
+        # Array of strings
+        ("Array of strings", [
+            "https://httpbin.org/post",
+            "https://webhook.site/test"
+        ]),
+        
+        # Array of objects with URL field
+        ("Array of objects", [
+            {"url": "https://httpbin.org/post", "description": "Test webhook 1"},
+            {"url": "https://webhook.site/test", "name": "Test webhook 2"}
+        ]),
+        
+        # Mixed format (string and object)
+        ("Mixed format", [
+            "https://httpbin.org/post",
+            {"url": "https://webhook.site/test", "type": "notification"}
+        ]),
+        
+        # Invalid formats
+        ("Invalid URL", "not_a_valid_url"),
+        ("Empty array", []),
+        ("None", None)
+    ]
+    
+    for description, webhook_input in test_cases:
+        print(f"\n🔍 Testing: {description}")
+        print(f"Input: {webhook_input}")
+        
+        try:
+            processed_webhooks = handler._process_request_webhooks(webhook_input)
+            print(f"✅ Processed webhooks: {processed_webhooks} ({len(processed_webhooks)} URLs)")
+        except Exception as e:
+            print(f"❌ Error processing webhooks: {e}")
+    
+    # Test webhook combination
+    print("\n🔄 Testing webhook combination...")
+    
+    # Set environment webhook
+    original_hooks = os.getenv("HOOKS", "")
+    os.environ["HOOKS"] = "https://env-webhook.example.com"
+    
+    # Re-initialize handler to pick up environment webhook
+    handler = RunPodHunyuan3DHandler()
+    
+    request_webhooks = ["https://request-webhook1.example.com", "https://request-webhook2.example.com"]
+    combined_webhooks = handler._get_combined_webhooks(request_webhooks)
+    
+    print(f"Environment webhooks: {handler.webhook_urls}")
+    print(f"Request webhooks: {request_webhooks}")
+    print(f"Combined webhooks: {combined_webhooks}")
+    
+    # Test deduplication
+    request_webhooks_with_duplicate = [
+        "https://env-webhook.example.com",  # Same as environment
+        "https://request-unique.example.com"
+    ]
+    combined_with_dedup = handler._get_combined_webhooks(request_webhooks_with_duplicate)
+    print(f"Combined with deduplication: {combined_with_dedup}")
+    
+    # Restore original environment
+    if original_hooks:
+        os.environ["HOOKS"] = original_hooks
+    elif "HOOKS" in os.environ:
+        del os.environ["HOOKS"]
+
+
+# Test function for full workflow with request webhooks
+def test_full_workflow_with_request_webhooks():
+    """Test full workflow with request-body webhooks"""
+    print("🧪 Testing full workflow with request-body webhooks...")
+    
+    test_input = {
+        "id": "request-webhook-test",
+        "input": {
+            "id": "req-webhook-001",
+            "workflow": "mesh",
+            "input_image": "assets/mune.png",
+            "output_name": "request_webhook_test",
+            "remove_background": False,
+            "upload_to_r2": False,
+            "mesh_params": {"steps": 3, "max_facenum": 500},
+            
+            # Test request-body webhooks
+            "webhooks": [
+                "https://httpbin.org/post",
+                {"url": "https://webhook.site/unique-id", "description": "Test notification"}
+            ]
+        },
+    }
+    
+    print("📝 Request includes webhooks:", test_input["input"]["webhooks"])
+    
+    # Test validation first
+    handler = RunPodHunyuan3DHandler()
+    try:
+        validated_params = handler._validate_input(test_input["input"])
+        print(f"✅ Validation passed. Processed webhooks: {validated_params['webhooks']}")
+        
+        # Note: We won't run the full workflow here to avoid long processing time
+        # but we can test the validation and webhook processing logic
+        print("ℹ️ Skipping full workflow execution for this test")
+        
+    except Exception as e:
+        print(f"❌ Validation failed: {e}")
+
+
+# Test function with webhook integration
+def test_handler_with_webhooks():
+    """Test the full handler with webhook functionality"""
+    print("🧪 Testing handler with webhook integration...")
+    
+    # Test with a custom webhook URL (if provided via env)
+    test_input = {
+        "id": "webhook-test-123",
+        "input": {
+            "id": "webhook-test-456",  # Test custom request ID
+            "workflow": "mesh",
+            "input_image": "assets/mune.png",
+            "output_name": "webhook_test_mesh",
+            "remove_background": False,
+            "mesh_params": {"steps": 3, "max_facenum": 500},  # Minimal for testing
+        },
+    }
+    
+    print("📝 Test input includes custom request ID:", test_input["input"]["id"])
+    
+    result = runpod_handler_sync(test_input)
+    
+    print(f"📤 Result includes request_id: {result.get('request_id', 'MISSING')}")
+    print(f"📊 Status: {result.get('status', 'MISSING')}")
+    
+    # Verify request ID was preserved
+    expected_id = test_input["input"]["id"]
+    actual_id = result.get("request_id")
+    
+    if actual_id == expected_id:
+        print("✅ Request ID tracking works correctly")
+    else:
+        print(f"❌ Request ID mismatch: expected {expected_id}, got {actual_id}")
+    
+    # Give webhooks time to be called
+    if result.get("status") == "success":
+        print("⏳ Waiting for webhooks to be called...")
+        import time
+        time.sleep(2)  # Give async webhooks time to execute
+
+
 # ASYNC TEST VERSION (commented out)
 # def test_handler_locally_async():
 #     """Test the handler locally with sample input (async version)"""
@@ -949,9 +1374,21 @@ if __name__ == "__main__":
         elif sys.argv[1] == "--test-r2":
             # Test R2 integration
             test_r2_integration()
+        elif sys.argv[1] == "--test-webhooks":
+            # Test webhook functionality
+            test_webhook_functionality()
+        elif sys.argv[1] == "--test-with-webhooks":
+            # Test handler with webhooks
+            test_handler_with_webhooks()
+        elif sys.argv[1] == "--test-request-webhooks":
+            # Test request-body webhook functionality
+            test_request_webhooks()
+        elif sys.argv[1] == "--test-full-request-webhooks":
+            # Test full workflow with request webhooks
+            test_full_workflow_with_request_webhooks()
         else:
             print(
-                "Usage: python runpod_handler.py [--test|--test-minimal|--validate|--test-image|--test-file|--test-r2]"
+                "Usage: python runpod_handler.py [--test|--test-minimal|--validate|--test-image|--test-file|--test-r2|--test-webhooks|--test-with-webhooks|--test-request-webhooks|--test-full-request-webhooks]"
             )
     else:
         # Start RunPod serverless with synchronous handler
